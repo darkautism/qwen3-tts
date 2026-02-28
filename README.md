@@ -2,19 +2,21 @@
 
 # qwen3-tts
 
-分散式 Qwen3-TTS 語音合成系統，專為 RK3588 叢集設計的 Rust 實作。
+Distributed Qwen3-TTS speech synthesis system — a Rust implementation designed for RK3588 clusters.
 
-單一二進位檔同時作為 CLI、OpenAI API 伺服器、MCP 伺服器與推理 Worker。
-模型自動從 HuggingFace Hub 下載。
-**零 Python 依賴** — 全部推理使用 Candle (Rust ML 框架)，語音編碼亦原生 ARM64。
-單一靜態編譯二進位，Talker/Predictor 不需要任何外部 .so 函式庫。
+Single binary serves as CLI, OpenAI-compatible API server, MCP server, and inference worker.
+Models auto-download from HuggingFace Hub.
+**Zero Python dependencies** — all inference uses Candle (Rust ML framework), voice encoding is native ARM64.
+Single statically-compiled binary; Talker/Predictor require no external `.so` libraries.
 
 [![][license-shield]][license-shield-link]
 [![][last-commit-shield]][last-commit-shield-link]
 
+[中文文檔](README-zh.md)
+
 </div>
 
-## 架構
+## Architecture
 
 ```
  Machine 1 (IP1 - RK3588)              Machine 2 (IP2 - RK3588)
@@ -31,94 +33,94 @@
 └──────────────────────────┘
 ```
 
-**三個 Worker 角色：**
+**Three Worker Roles:**
 
-| Worker | 功能 | 運算資源 | 預設 Port |
-|--------|------|----------|-----------|
+| Worker | Function | Compute | Default Port |
+|--------|----------|---------|--------------|
 | **Talker** | Tokenizer + TextEmbedder + LLM | CPU A76 × 4 | 9090 |
-| **Predictor** | CodePredictor (Candle GGUF Q8_0) + 回饋嵌入 | CPU A76 × 4 | 9091 |
-| **Vocoder** | Vocoder (ONNX FP32 CPU, 或 RKNN INT8 NPU) | CPU/NPU | 9092 |
+| **Predictor** | CodePredictor (Candle GGUF Q8_0) + feedback embedding | CPU A76 × 4 | 9091 |
+| **Vocoder** | Vocoder (ONNX FP32 CPU, or RKNN INT8 NPU) | CPU/NPU | 9092 |
 
-每台 RK3588 各占滿 CPU。Token 生成：Candle ~3.6 tok/s (預設) / GGML ~4.0 tok/s (`--features ggml-backend`)。
+Each RK3588 saturates its CPU cores. Token generation: Candle ~3.6 tok/s (default) / GGML ~4.0 tok/s (`--features ggml-backend`).
 
-## 系統需求
+## Requirements
 
-### 硬體
-- 1～3 台 RK3588 開發板 (推薦 16GB+ RAM)
+### Hardware
+- 1–3 RK3588 boards (16GB+ RAM recommended)
 
-### 執行期依賴
+### Runtime Dependencies
 
-推理核心 (Talker、Predictor) 使用 Candle (純 Rust)，**無需安裝任何外部函式庫**。
+Inference core (Talker, Predictor) uses Candle (pure Rust) — **no external libraries needed**.
 
-**Vocoder 機器需要：**
+**Vocoder machine requires:**
 
-| 函式庫 | 來源 | 安裝路徑 |
-|--------|------|----------|
-| `libonnxruntime.so` | `pip install onnxruntime` (自動偵測) | Python 套件或系統路徑 |
+| Library | Source | Install Path |
+|---------|--------|-------------|
+| `libonnxruntime.so` | `pip install onnxruntime` (auto-detected) | Python package or system path |
 
-> 使用 `--features rknn-vocoder` 時，改為需要 `librknnrt.so` (RKNN Runtime)。
+> With `--features rknn-vocoder`, requires `librknnrt.so` (RKNN Runtime) instead.
 
-### 安裝 ONNX Runtime (Vocoder 機器)
+### Installing ONNX Runtime (Vocoder Machine)
 
 ```bash
-# 最簡方式：透過 Python 套件 (程式會自動偵測)
+# Easiest: via Python package (auto-detected by the binary)
 pip install onnxruntime
 
-# 或手動安裝到系統路徑
-# 下載 aarch64 版本: https://github.com/microsoft/onnxruntime/releases
+# Or manual system install
+# Download aarch64 build: https://github.com/microsoft/onnxruntime/releases
 sudo cp libonnxruntime.so /usr/lib/
 ```
 
-### (選用) 安裝 RKNN Runtime
+### (Optional) RKNN Runtime
 
-僅在使用 `--features rknn-vocoder` 時需要：
+Only needed with `--features rknn-vocoder`:
 
 ```bash
 sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so \
   -o /lib/librknnrt.so
 ```
 
-## 編譯
+## Building
 
 ```bash
-# 標準編譯 (Candle 推理 + ONNX FP32 vocoder — 純 Rust，無額外 .so)
+# Standard build (Candle inference + ONNX FP32 vocoder — pure Rust, no extra .so)
 cargo build --release
 
-# 使用 C++ GGML 後端 (ARM NEON SDOT 加速，~2x 快於 Candle，需 llama_wrapper.so)
+# C++ GGML backend (ARM NEON SDOT acceleration, ~2x faster than Candle, needs llama_wrapper.so)
 cargo build --release --features ggml-backend
 
-# 使用 RKNN INT8 vocoder (NPU 加速，有量化雜音，需 librknnrt.so)
+# RKNN INT8 vocoder (NPU acceleration, has quantization noise, needs librknnrt.so)
 cargo build --release --features rknn-vocoder
 
-# 兩者都啟用
+# Both enabled
 cargo build --release --features ggml-backend,rknn-vocoder
-# 產出: target/release/qwen3-tts (~15-20 MB)
+# Output: target/release/qwen3-tts (~15-20 MB)
 ```
 
-> 交叉編譯可使用 `cross build --release --target aarch64-unknown-linux-gnu`
+> Cross-compile: `cross build --release --target aarch64-unknown-linux-gnu`
 
 ### Feature Gates
 
-| Feature | 說明 | 額外依賴 | 效能 |
-|---------|------|----------|------|
-| (預設) | Candle 推理 + ONNX vocoder | `libonnxruntime.so` | ~3.6 tok/s |
-| `ggml-backend` | C++ GGML/llama.cpp 推理 | `llama_wrapper.so` + `libllama.so` + `libggml*.so` | **~4.0 tok/s** |
+| Feature | Description | Extra Dependencies | Performance |
+|---------|-------------|-------------------|-------------|
+| (default) | Candle inference + ONNX vocoder | `libonnxruntime.so` | ~3.6 tok/s |
+| `ggml-backend` | C++ GGML/llama.cpp inference | `llama_wrapper.so` + `libllama.so` + `libggml*.so` | **~4.0 tok/s** |
 | `rknn-vocoder` | RKNN INT8 vocoder (NPU) | `librknnrt.so` + RKNPU kernel | — |
 
-預設使用 Candle (純 Rust) 推理，不需額外安裝 C/C++ 函式庫。
-啟用 `ggml-backend` 可利用 ARM NEON SDOT 硬體指令額外加速約 10-15%。
-Candle 後端已包含 SDOT 內聯組語優化 + 預分配記憶體池，差距已大幅縮小。
+Default uses Candle (pure Rust) inference — no C/C++ library installation needed.
+Enabling `ggml-backend` leverages ARM NEON SDOT hardware instructions for ~10-15% extra speed.
+The Candle backend already includes SDOT inline assembly optimization + pre-allocated memory pools.
 
-## 快速開始
+## Quick Start
 
-### 初始化配置
+### Initialize Configuration
 
 ```bash
-# 產生 qwen3-tts.toml，設定你的 Worker IP
+# Generate qwen3-tts.toml with your worker IPs
 qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ```
 
-### 啟動 Worker (模型自動從 HF Hub 下載)
+### Start Workers (models auto-download from HF Hub)
 
 ```bash
 # IP1 - Talker Worker
@@ -127,80 +129,80 @@ qwen3-tts worker -r talker -b 0.0.0.0:9090
 # IP2 - Predictor Worker
 qwen3-tts worker -r predictor -b 0.0.0.0:9091
 
-# IP2 - Vocoder Worker (可以和 Predictor 同一台)
+# IP2 - Vocoder Worker (can share machine with Predictor)
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
-> 模型預設下載到 `~/.local/share/qwen3-tts/models/{role}/`
-> 自定義 HF repo: `--repo your-name/your-repo`
+> Models download to `~/.local/share/qwen3-tts/models/{role}/` by default.
+> Custom HF repo: `--repo your-name/your-repo`
 
-### 合成語音
+### Synthesize Speech
 
 ```bash
-# 簡單用法 (輸出 output.wav)
+# Simple usage (outputs output.wav)
 qwen3-tts "你好世界"
 
-# 指定輸出和語言
+# Specify output and language
 qwen3-tts speak "Hello world" -o speech.wav --lang english
 
-# 聲音克隆 (自訂聲音檔)
+# Voice cloning (custom voice file)
 qwen3-tts speak "你好" --voice my_voice.json -o clone.wav
 ```
 
-## 聲音克隆
+## Voice Cloning
 
-### 製作聲音
+### Creating a Voice Profile
 
-直接在 RK3588 上運行，**不需要 x86 或 Python**：
+Runs directly on RK3588 — **no x86 or Python needed**:
 
 ```bash
-# 編碼參考音訊 → 輸出單一 .json 聲音檔 (支援任意取樣率，自動重取樣至 24kHz)
+# Encode reference audio → outputs a single .json voice file (any sample rate, auto-resampled to 24kHz)
 qwen3-tts encode-voice \
     -a reference.wav \
-    -r "參考音檔中說的文字內容" \
+    -r "Text spoken in the reference audio" \
     -o my_voice.json
 
-# 使用自訂聲音
-qwen3-tts speak "要合成的新文字" --voice my_voice.json -o output.wav
+# Use the custom voice
+qwen3-tts speak "New text to synthesize" --voice my_voice.json -o output.wav
 ```
 
-聲音檔格式 (`.json`)：
+Voice file format (`.json`):
 ```json
 {
-  "ref_text": "參考音檔中說的文字內容",
+  "ref_text": "Text spoken in the reference audio",
   "codec_tokens": [[...], ...]
 }
 ```
 
-> `ref_text` 用於 In-Context Learning (ICL)，讓模型對齊參考音訊與文字，提升克隆品質。
-> 也支援舊格式 `.npy` 和 `.pt` 檔案 (無 ref_text，品質較低)。
+> `ref_text` enables In-Context Learning (ICL), aligning reference audio with text for better cloning quality.
+> Legacy `.npy` and `.pt` files are also supported (no ref_text, lower quality).
 
-語音編碼使用原生 Candle (Rust ML 框架) 實作的 Mimi Speech Tokenizer，
-約 2 秒即可處理 4 秒音訊，完全在 CPU 上運行。
+Voice encoding uses a native Candle (Rust ML) implementation of the Mimi Speech Tokenizer —
+processes ~4s of audio in ~2s, entirely on CPU.
 
-## 部署範例
+## Deployment Examples
 
-### 一台機器 (IP1 跑全部三個 Worker)
+### Single Machine (all three workers on IP1)
 
 ```bash
 qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip 127.0.0.1 --vocoder-ip 127.0.0.1
 ```
 
 ```bash
-# 終端 1: Talker
+# Terminal 1: Talker
 qwen3-tts worker -r talker -b 0.0.0.0:9090
 
-# 終端 2: Predictor
+# Terminal 2: Predictor
 qwen3-tts worker -r predictor -b 0.0.0.0:9091
 
-# 終端 3: Vocoder
+# Terminal 3: Vocoder
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
-# 終端 4: 合成
+# Terminal 4: Synthesize
 qwen3-tts "你好世界"
 ```
 
-### 兩台機器 (IP1 = Talker, IP2 = Predictor + Vocoder)
+### Two Machines (IP1 = Talker, IP2 = Predictor + Vocoder)
 
 ```bash
 qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip <IP2> --vocoder-ip <IP2>
@@ -218,7 +220,7 @@ qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 qwen3-tts "你好世界"
 ```
 
-### 三台機器 (IP1 = Talker, IP2 = Predictor, IP3 = Vocoder)
+### Three Machines (IP1 = Talker, IP2 = Predictor, IP3 = Vocoder)
 
 ```bash
 qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP3>
@@ -234,13 +236,13 @@ qwen3-tts worker -r predictor -b 0.0.0.0:9091
 # IP3:
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
-# 任意機器 (含 IP1):
+# Any machine (including IP1):
 qwen3-tts "你好世界"
 ```
 
-### 從任意機器使用已部署的 Worker
+### Using Deployed Workers from Any Machine
 
-只要有 `qwen3-tts` 二進位和正確的配置檔，**任何能連上 Worker 的機器**都可以做語音合成。控制端不需要 GPU、NPU 或特殊硬體。
+Any machine with the `qwen3-tts` binary and correct config can synthesize speech. The client needs no GPU, NPU, or special hardware.
 
 ```bash
 cat > qwen3-tts.toml << EOF
@@ -271,66 +273,66 @@ EOF
 qwen3-tts "你好世界"
 ```
 
-## CLI 參考
+## CLI Reference
 
-| 指令 | 說明 |
-|------|------|
-| `qwen3-tts "文字"` | 快速語音合成 (輸出 output.wav) |
-| `qwen3-tts speak "文字" -o file.wav` | 指定輸出檔案 |
-| `qwen3-tts speak "文字" --lang english` | 指定語言 |
-| `qwen3-tts speak "文字" --voice voice.json` | 聲音克隆 |
-| `qwen3-tts encode-voice -a ref.wav -r "文字" -o voice.json` | 製作聲音檔 (ARM64 原生) |
-| `qwen3-tts serve --port 8080` | 啟動 OpenAI 相容 API |
-| `qwen3-tts mcp` | 啟動 MCP 伺服器 (stdio) |
-| `qwen3-tts worker -r talker` | 啟動 Talker Worker |
-| `qwen3-tts worker -r predictor` | 啟動 Predictor Worker |
-| `qwen3-tts worker -r vocoder` | 啟動 Vocoder Worker |
-| `qwen3-tts init --predictor-ip <IP>` | 產生配置檔 |
+| Command | Description |
+|---------|-------------|
+| `qwen3-tts "text"` | Quick speech synthesis (outputs output.wav) |
+| `qwen3-tts speak "text" -o file.wav` | Specify output file |
+| `qwen3-tts speak "text" --lang english` | Specify language |
+| `qwen3-tts speak "text" --voice voice.json` | Voice cloning |
+| `qwen3-tts encode-voice -a ref.wav -r "text" -o voice.json` | Create voice profile (native ARM64) |
+| `qwen3-tts serve --port 8080` | Start OpenAI-compatible API server |
+| `qwen3-tts mcp` | Start MCP server (stdio) |
+| `qwen3-tts worker -r talker` | Start Talker Worker |
+| `qwen3-tts worker -r predictor` | Start Predictor Worker |
+| `qwen3-tts worker -r vocoder` | Start Vocoder Worker |
+| `qwen3-tts init --predictor-ip <IP>` | Generate config file |
 
-## OpenAI 相容 API
+## OpenAI-Compatible API
 
 ```bash
-# 啟動伺服器
+# Start server
 qwen3-tts serve --port 8080
 ```
 
 ```bash
-# 基本合成
+# Basic synthesis
 curl -X POST http://<IP1>:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"input": "你好世界", "voice": "default"}' \
+  -d '{"input": "Hello world", "voice": "default"}' \
   --output speech.wav
 
-# 聲音克隆 (voice 填聲音檔的路徑，支援 .json/.npy/.pt)
+# Voice cloning (voice = path to voice file, supports .json/.npy/.pt)
 curl -X POST http://<IP1>:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"input": "你好世界", "voice": "/path/to/my_voice.json"}' \
+  -d '{"input": "Hello world", "voice": "/path/to/my_voice.json"}' \
   --output speech.wav
 ```
 
-支援參數：
+Supported parameters:
 
-| 參數 | 類型 | 預設 | 說明 |
-|------|------|------|------|
-| `input` | string | (必填) | 要合成的文字 |
-| `voice` | string | `"default"` | 聲音檔路徑 (`.json`/`.npy`/`.pt`) |
-| `language` | string | `"chinese"` | 語言 |
-| `model` | string | `"qwen3-tts"` | 模型名稱 |
-| `response_format` | string | `"wav"` | 輸出格式 |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `input` | string | (required) | Text to synthesize |
+| `voice` | string | `"default"` | Voice file path (`.json`/`.npy`/`.pt`) |
+| `language` | string | `"chinese"` | Language |
+| `model` | string | `"qwen3-tts"` | Model name |
+| `response_format` | string | `"wav"` | Output format |
 
-## MCP 伺服器
+## MCP Server
 
-透過 stdio JSON-RPC 提供 AI 工具：
+Provides AI tools via stdio JSON-RPC:
 
 ```bash
 qwen3-tts mcp
 ```
 
-### 工具
+### Tools
 
-- **text_to_speech** — 文字轉語音，支援聲音克隆
+- **text_to_speech** — Text-to-speech with voice cloning support
 
-### 設定 (Claude Desktop / Cursor 等)
+### Configuration (Claude Desktop / Cursor etc.)
 
 ```json
 {
@@ -343,7 +345,7 @@ qwen3-tts mcp
 }
 ```
 
-### 範例呼叫
+### Example Call
 
 ```json
 {
@@ -353,7 +355,7 @@ qwen3-tts mcp
   "params": {
     "name": "text_to_speech",
     "arguments": {
-      "text": "你好，這是聲音克隆測試。",
+      "text": "Hello, this is a voice cloning test.",
       "voice": "/path/to/my_voice.json",
       "output_path": "output.wav"
     }
@@ -361,9 +363,9 @@ qwen3-tts mcp
 }
 ```
 
-## 設定檔
+## Configuration
 
-路徑優先順序：`./qwen3-tts.toml` > `~/.config/qwen3-tts/config.toml`
+Path priority: `./qwen3-tts.toml` > `~/.config/qwen3-tts/config.toml`
 
 ```toml
 [workers.talker]
@@ -371,11 +373,11 @@ host = "127.0.0.1"       # Talker Worker IP
 port = 9090
 
 [workers.predictor]
-host = "<YOUR_IP>"        # ⚠️ 改成你的 Predictor IP
+host = "<YOUR_IP>"        # ⚠️ Change to your Predictor IP
 port = 9091
 
 [workers.vocoder]
-host = "<YOUR_IP>"        # ⚠️ 改成你的 Vocoder IP
+host = "<YOUR_IP>"        # ⚠️ Change to your Vocoder IP
 port = 9092
 
 [defaults]
@@ -385,18 +387,18 @@ temperature = 0.8
 cp_temperature = 0.1
 repetition_penalty = 1.2
 
-# EOS 收斂參數 (可微調，預設值適用大多數情況)
-# eos_start_ratio = 0.6     # 從預估 token 數的 60% 開始加 boost
-# eos_max_ratio = 1.2       # 在 120% 時 boost 達到最大值
-# eos_force_ratio = 1.5     # 在 150% 時強制停止
-# eos_max_boost = 25.0      # 最大 EOS logit 增量
+# EOS convergence parameters (tunable, defaults work for most cases)
+# eos_start_ratio = 0.6     # Start boosting EOS at 60% of estimated tokens
+# eos_max_ratio = 1.2       # Max boost at 120%
+# eos_force_ratio = 1.5     # Force stop at 150%
+# eos_max_boost = 25.0      # Maximum EOS logit increment
 
 [server]
 host = "0.0.0.0"
 port = 8080
 ```
 
-## HuggingFace 模型結構
+## HuggingFace Model Structure
 
 ```
 kautism/qwen3-tts-rk3588/
@@ -410,35 +412,35 @@ kautism/qwen3-tts-rk3588/
 │   │   └── config.json
 │   └── embeddings/
 ├── vocoder/                       # Vocoder Worker
-│   ├── vocoder.onnx              (436 MB, FP32 CPU — 預設)
-│   └── vocoder.rknn              (128 MB, INT8 NPU — 需 rknn-vocoder feature)
-└── speech_tokenizer/              # 語音編碼 (encode-voice)
+│   ├── vocoder.onnx              (436 MB, FP32 CPU — default)
+│   └── vocoder.rknn              (128 MB, INT8 NPU — needs rknn-vocoder feature)
+└── speech_tokenizer/              # Voice encoding (encode-voice)
     └── model.safetensors         (651 MB, Mimi encoder)
 ```
 
-Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
+Workers auto-download their role's models from HuggingFace Hub on first start.
 
-## 支援語言
+## Supported Languages
 
-中文 · English · Deutsch · Русский · Français · 日本語 · 한국어
+Chinese · English · Deutsch · Русский · Français · 日本語 · 한국어
 
-## 效能
+## Performance
 
-| 指標 | Candle (預設) | GGML (`--features ggml-backend`) |
-|------|--------------|----------------------------------|
-| Token 生成速率 | ~3.6 tok/s | **~4.0 tok/s** |
-| Talker 延遲 | ~60ms/step | ~33ms/step |
-| Predictor 延遲 | ~185ms/step | ~185ms/step |
-| Vocoder (ONNX FP32) | ~4.5s (CPU, 無雜音) | ~4.5s |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, 有量化雜音) | ~2.7s |
-| RTF — ONNX (預設) | ~5.0x | ~3.8x |
+| Metric | Candle (default) | GGML (`--features ggml-backend`) |
+|--------|-----------------|----------------------------------|
+| Token generation rate | ~3.6 tok/s | **~4.0 tok/s** |
+| Talker latency | ~60ms/step | ~33ms/step |
+| Predictor latency | ~185ms/step | ~185ms/step |
+| Vocoder (ONNX FP32) | ~4.5s (CPU, clean audio) | ~4.5s |
+| Vocoder (RKNN INT8) | ~2.7s (NPU, quantization noise) | ~2.7s |
+| RTF — ONNX (default) | ~5.0x | ~3.8x |
 | RTF — RKNN | ~4.2x | ~3.5x |
-| 語音編碼速度 | ~2s/4s audio | ~2s/4s audio |
-| 網路開銷 | <5ms/step (LAN) | <5ms/step (LAN) |
-| 外部依賴 | `libonnxruntime.so` | `.so` 多個 (見上表) |
+| Voice encoding speed | ~2s/4s audio | ~2s/4s audio |
+| Network overhead | <5ms/step (LAN) | <5ms/step (LAN) |
+| External dependencies | `libonnxruntime.so` | Multiple `.so` (see table above) |
 
-> RTF = 生成時間 / 音訊時間。RTF < 1 為即時。
-> Candle 後端已包含 SDOT 內聯組語和預分配記憶體池優化。
+> RTF = generation time / audio duration. RTF < 1 is real-time.
+> Candle backend includes SDOT inline assembly and pre-allocated memory pool optimizations.
 
 ## Support the Project
 
