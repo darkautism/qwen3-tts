@@ -2,7 +2,7 @@
 
 # qwen3-tts
 
-分散式 Qwen3-TTS 語音合成系統，專為 RK3588 叢集設計的 Rust 實作。
+分散式 Qwen3-TTS 語音合成系統，專為低成本叢集設計的實作。
 
 單一二進位檔同時作為 CLI、OpenAI API 伺服器、MCP 伺服器與推理 Worker。
 模型自動從 HuggingFace Hub 下載。
