@@ -2,7 +2,7 @@
 
 # qwen3-tts
 
-Distributed Qwen3-TTS speech synthesis system — a Rust implementation designed for RK3588 clusters.
+Distributed Qwen3-TTS speech synthesis system — a Rust implementation designed for Low cost clusters.
 
 Single binary serves as CLI, OpenAI-compatible API server, MCP server, and inference worker.
 Models auto-download from HuggingFace Hub.
