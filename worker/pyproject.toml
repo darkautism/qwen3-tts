@@ -1,0 +1,19 @@
+[project]
+name = "qwen3-tts-worker"
+version = "0.1.0"
+description = "Qwen3-TTS inference worker for RK3588"
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy>=1.24",
+    "msgpack>=1.0",
+    "transformers>=4.40",
+    "onnxruntime>=1.17",
+]
+
+[project.optional-dependencies]
+rknn = ["rknn-toolkit2-lite"]
+llama = ["llama-cpp-python>=0.3"]
+
+[project.scripts]
+qwen3-tts-worker = "worker_server:main"

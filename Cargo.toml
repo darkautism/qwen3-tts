@@ -1,0 +1,90 @@
+[package]
+name = "qwen3-tts"
+version = "0.1.0"
+edition = "2021"
+description = "Distributed Qwen3-TTS inference on RK3588 cluster"
+license = "MIT"
+
+[[bin]]
+name = "qwen3-tts"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server (OpenAI API)
+axum = { version = "0.7", features = ["multipart"] }
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rmp-serde = "1"
+
+# HTTP client (for worker health checks)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Audio
+hound = "3"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Config
+toml = "0.8"
+
+# Base64 for binary in msgpack
+base64 = "0.22"
+
+# UUID for request IDs
+uuid = { version = "1", features = ["v4"] }
+
+# --- Worker dependencies ---
+# Numeric arrays & .npy/.npz loading
+ndarray = "0.17"
+ndarray-npy = "0.10"
+
+# Dynamic library loading (rknn)
+libloading = { version = "0.8", optional = true }
+
+# ONNX Runtime (Vocoder default, CodePredictor fallback)
+ort = { version = "2.0.0-rc.11", default-features = false, features = ["load-dynamic", "ndarray"] }
+
+# HuggingFace tokenizer
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+
+# Random sampling
+rand = "0.8"
+
+# HuggingFace Hub model download
+hf-hub = "0.4"
+
+# Platform directories
+dirs = "6"
+
+# Candle (speech tokenizer encoder for voice cloning on ARM)
+candle-core = "0.9"
+candle-nn = "0.9"
+safetensors = "0.5"
+
+# Zip (for npz loading in ggml-backend)
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+# Byte casting (for npy parsing in ggml-backend)
+bytemuck = { version = "1", optional = true, features = ["derive"] }
+
+[features]
+default = []
+rknn-vocoder = ["dep:libloading"]  # Use RKNN INT8 NPU vocoder instead of ONNX FP32 (faster, has quantization noise)
+ggml-backend = ["dep:libloading", "dep:zip", "dep:bytemuck"]  # Use C++ GGML/llama.cpp (faster on ARM, needs external .so)
+
+[patch.crates-io]
+candle-core = { path = "../candle-core-patched" }

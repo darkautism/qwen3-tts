@@ -1,0 +1,12 @@
+/target
+/models
+*.rknn
+*.gguf
+*.rkllm
+*.onnx
+*.npy
+*.npz
+*.wav
+__pycache__
+.venv
+*.egg-info
