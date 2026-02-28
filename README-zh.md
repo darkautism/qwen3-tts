@@ -2,11 +2,11 @@
 
 # qwen3-tts
 
-分散式 Qwen3-TTS 語音合成系統，專為低成本叢集設計的實作。
+分散式 Qwen3-TTS 語音合成系統，專為低成本 SBC 叢集設計的 Rust 實作。
 
 單一二進位檔同時作為 CLI、OpenAI API 伺服器、MCP 伺服器與推理 Worker。
 模型自動從 HuggingFace Hub 下載。
-**零 Python 依賴** — 全部推理使用 Candle (Rust ML 框架)，語音編碼亦原生 ARM64。
+**零 Python 依賴** — 全部推理使用 Candle (Rust ML 框架)，語音編碼亦原生執行。
 單一靜態編譯二進位，Talker/Predictor 不需要任何外部 .so 函式庫。
 
 [![][license-shield]][license-shield-link]
@@ -17,7 +17,7 @@
 ## 架構
 
 ```
- Machine 1 (IP1 - RK3588)              Machine 2 (IP2 - RK3588)
+ Machine 1 (SBC / 伺服器)              Machine 2 (SBC / 伺服器)
 ┌──────────────────────────┐          ┌──────────────────────────┐
 │  qwen3-tts (Rust)        │          │  Worker: Predictor       │
 │  ├── CLI / API / MCP     │   TCP    │  ├── CodePredictor       │
@@ -35,16 +35,17 @@
 
 | Worker | 功能 | 運算資源 | 預設 Port |
 |--------|------|----------|-----------|
-| **Talker** | Tokenizer + TextEmbedder + LLM | CPU A76 × 4 | 9090 |
-| **Predictor** | CodePredictor (Candle GGUF Q8_0) + 回饋嵌入 | CPU A76 × 4 | 9091 |
-| **Vocoder** | Vocoder (ONNX FP32 CPU, 或 RKNN INT8 NPU) | CPU/NPU | 9092 |
+| **Talker** | Tokenizer + TextEmbedder + LLM | CPU | 9090 |
+| **Predictor** | CodePredictor (Candle GGUF Q8_0) + 回饋嵌入 | CPU | 9091 |
+| **Vocoder** | Vocoder (ONNX FP32 CPU) | CPU | 9092 |
 
-每台 RK3588 各占滿 CPU。Token 生成：Candle ~3.6 tok/s (預設) / GGML ~4.0 tok/s (`--features ggml-backend`)。
+將工作分散在低成本 SBC 或任何 Linux 機器上。Token 生成：Candle ~3.6 tok/s (預設) / GGML ~4.0 tok/s (`--features ggml-backend`)。
 
 ## 系統需求
 
 ### 硬體
-- 1～3 台 RK3588 開發板 (推薦 16GB+ RAM)
+- 1～3 台 Linux 機器（低成本 ARM SBC 即可；每節點 4GB+ RAM）
+- 任何 aarch64 或 x86_64 Linux 系統 — 已在 RK3588 測試，其他 ARM 開發板亦可
 
 ### 執行期依賴
 
@@ -55,8 +56,6 @@
 | 函式庫 | 來源 | 安裝路徑 |
 |--------|------|----------|
 | `libonnxruntime.so` | `pip install onnxruntime` (自動偵測) | Python 套件或系統路徑 |
-
-> 使用 `--features rknn-vocoder` 時，改為需要 `librknnrt.so` (RKNN Runtime)。
 
 ### 安裝 ONNX Runtime (Vocoder 機器)
 
@@ -69,11 +68,13 @@ pip install onnxruntime
 sudo cp libonnxruntime.so /usr/lib/
 ```
 
-### (選用) 安裝 RKNN Runtime
+### (選用) RKNN NPU 加速
 
-僅在使用 `--features rknn-vocoder` 時需要：
+使用 `--features rknn-vocoder` 時，vocoder 會在 Rockchip NPU 上執行。
+**注意：** RKNN INT8 量化會在輸出中引入可聽見的雜音。僅在 RTF 至關重要時使用。
 
 ```bash
+# 需要 librknnrt.so 和 RKNPU kernel driver
 sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so \
   -o /lib/librknnrt.so
 ```
@@ -87,7 +88,7 @@ cargo build --release
 # 使用 C++ GGML 後端 (ARM NEON SDOT 加速，~2x 快於 Candle，需 llama_wrapper.so)
 cargo build --release --features ggml-backend
 
-# 使用 RKNN INT8 vocoder (NPU 加速，有量化雜音，需 librknnrt.so)
+# 使用 RKNN INT8 vocoder (僅 Rockchip NPU — 較快但有量化雜音)
 cargo build --release --features rknn-vocoder
 
 # 兩者都啟用
@@ -103,11 +104,12 @@ cargo build --release --features ggml-backend,rknn-vocoder
 |---------|------|----------|------|
 | (預設) | Candle 推理 + ONNX vocoder | `libonnxruntime.so` | ~3.6 tok/s |
 | `ggml-backend` | C++ GGML/llama.cpp 推理 | `llama_wrapper.so` + `libllama.so` + `libggml*.so` | **~4.0 tok/s** |
-| `rknn-vocoder` | RKNN INT8 vocoder (NPU) | `librknnrt.so` + RKNPU kernel | — |
+| `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ 有雜音 |
 
 預設使用 Candle (純 Rust) 推理，不需額外安裝 C/C++ 函式庫。
 啟用 `ggml-backend` 可利用 ARM NEON SDOT 硬體指令額外加速約 10-15%。
 Candle 後端已包含 SDOT 內聯組語優化 + 預分配記憶體池，差距已大幅縮小。
+RKNN vocoder 以音質換取速度 — INT8 量化會引入可聽見的雜音。
 
 ## 快速開始
 
@@ -151,7 +153,7 @@ qwen3-tts speak "你好" --voice my_voice.json -o clone.wav
 
 ### 製作聲音
 
-直接在 RK3588 上運行，**不需要 x86 或 Python**：
+直接在 ARM SBC 上運行，**不需要 x86 或 Python**：
 
 ```bash
 # 編碼參考音訊 → 輸出單一 .json 聲音檔 (支援任意取樣率，自動重取樣至 24kHz)
@@ -430,8 +432,8 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 | Talker 延遲 | ~60ms/step | ~33ms/step |
 | Predictor 延遲 | ~185ms/step | ~185ms/step |
 | Vocoder (ONNX FP32) | ~4.5s (CPU, 無雜音) | ~4.5s |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, 有量化雜音) | ~2.7s |
-| RTF — ONNX (預設) | ~5.0x | ~3.8x |
+| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ 有雜音) | ~2.7s |
+| RTF — ONNX (預設) | ~4.8x | ~3.8x |
 | RTF — RKNN | ~4.2x | ~3.5x |
 | 語音編碼速度 | ~2s/4s audio | ~2s/4s audio |
 | 網路開銷 | <5ms/step (LAN) | <5ms/step (LAN) |

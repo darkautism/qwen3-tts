@@ -2,11 +2,11 @@
 
 # qwen3-tts
 
-Distributed Qwen3-TTS speech synthesis system — a Rust implementation designed for Low cost clusters.
+Distributed Qwen3-TTS speech synthesis system — a Rust implementation designed for low-cost SBC clusters.
 
 Single binary serves as CLI, OpenAI-compatible API server, MCP server, and inference worker.
 Models auto-download from HuggingFace Hub.
-**Zero Python dependencies** — all inference uses Candle (Rust ML framework), voice encoding is native ARM64.
+**Zero Python dependencies** — all inference uses Candle (Rust ML framework), voice encoding is native.
 Single statically-compiled binary; Talker/Predictor require no external `.so` libraries.
 
 [![][license-shield]][license-shield-link]
@@ -19,7 +19,7 @@ Single statically-compiled binary; Talker/Predictor require no external `.so` li
 ## Architecture
 
 ```
- Machine 1 (IP1 - RK3588)              Machine 2 (IP2 - RK3588)
+ Machine 1 (SBC / Server)              Machine 2 (SBC / Server)
 ┌──────────────────────────┐          ┌──────────────────────────┐
 │  qwen3-tts (Rust)        │          │  Worker: Predictor       │
 │  ├── CLI / API / MCP     │   TCP    │  ├── CodePredictor       │
@@ -37,16 +37,17 @@ Single statically-compiled binary; Talker/Predictor require no external `.so` li
 
 | Worker | Function | Compute | Default Port |
 |--------|----------|---------|--------------|
-| **Talker** | Tokenizer + TextEmbedder + LLM | CPU A76 × 4 | 9090 |
-| **Predictor** | CodePredictor (Candle GGUF Q8_0) + feedback embedding | CPU A76 × 4 | 9091 |
-| **Vocoder** | Vocoder (ONNX FP32 CPU, or RKNN INT8 NPU) | CPU/NPU | 9092 |
+| **Talker** | Tokenizer + TextEmbedder + LLM | CPU | 9090 |
+| **Predictor** | CodePredictor (Candle GGUF Q8_0) + feedback embedding | CPU | 9091 |
+| **Vocoder** | Vocoder (ONNX FP32 CPU) | CPU | 9092 |
 
-Each RK3588 saturates its CPU cores. Token generation: Candle ~3.6 tok/s (default) / GGML ~4.0 tok/s (`--features ggml-backend`).
+Distributes workload across low-cost SBCs or any Linux machines. Token generation: Candle ~3.6 tok/s (default) / GGML ~4.0 tok/s (`--features ggml-backend`).
 
 ## Requirements
 
 ### Hardware
-- 1–3 RK3588 boards (16GB+ RAM recommended)
+- 1–3 Linux machines (low-cost ARM SBCs work well; 4GB+ RAM per node)
+- Any aarch64 or x86_64 Linux system — tested on RK3588, should work on other ARM boards
 
 ### Runtime Dependencies
 
@@ -57,8 +58,6 @@ Inference core (Talker, Predictor) uses Candle (pure Rust) — **no external lib
 | Library | Source | Install Path |
 |---------|--------|-------------|
 | `libonnxruntime.so` | `pip install onnxruntime` (auto-detected) | Python package or system path |
-
-> With `--features rknn-vocoder`, requires `librknnrt.so` (RKNN Runtime) instead.
 
 ### Installing ONNX Runtime (Vocoder Machine)
 
@@ -71,11 +70,13 @@ pip install onnxruntime
 sudo cp libonnxruntime.so /usr/lib/
 ```
 
-### (Optional) RKNN Runtime
+### (Optional) RKNN NPU Acceleration
 
-Only needed with `--features rknn-vocoder`:
+With `--features rknn-vocoder`, the vocoder runs on Rockchip NPU instead of CPU.
+**Note:** RKNN INT8 quantization introduces audible noise in the output. Use only if RTF reduction is critical.
 
 ```bash
+# Requires librknnrt.so and RKNPU kernel driver
 sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so \
   -o /lib/librknnrt.so
 ```
@@ -89,7 +90,7 @@ cargo build --release
 # C++ GGML backend (ARM NEON SDOT acceleration, ~2x faster than Candle, needs llama_wrapper.so)
 cargo build --release --features ggml-backend
 
-# RKNN INT8 vocoder (NPU acceleration, has quantization noise, needs librknnrt.so)
+# RKNN INT8 vocoder (Rockchip NPU only — faster but introduces quantization noise)
 cargo build --release --features rknn-vocoder
 
 # Both enabled
@@ -105,11 +106,12 @@ cargo build --release --features ggml-backend,rknn-vocoder
 |---------|-------------|-------------------|-------------|
 | (default) | Candle inference + ONNX vocoder | `libonnxruntime.so` | ~3.6 tok/s |
 | `ggml-backend` | C++ GGML/llama.cpp inference | `llama_wrapper.so` + `libllama.so` + `libggml*.so` | **~4.0 tok/s** |
-| `rknn-vocoder` | RKNN INT8 vocoder (NPU) | `librknnrt.so` + RKNPU kernel | — |
+| `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ has noise |
 
 Default uses Candle (pure Rust) inference — no C/C++ library installation needed.
 Enabling `ggml-backend` leverages ARM NEON SDOT hardware instructions for ~10-15% extra speed.
 The Candle backend already includes SDOT inline assembly optimization + pre-allocated memory pools.
+RKNN vocoder trades audio quality for speed — INT8 quantization introduces audible artifacts.
 
 ## Quick Start
 
@@ -153,7 +155,7 @@ qwen3-tts speak "你好" --voice my_voice.json -o clone.wav
 
 ### Creating a Voice Profile
 
-Runs directly on RK3588 — **no x86 or Python needed**:
+Runs directly on ARM SBCs — **no x86 or Python needed**:
 
 ```bash
 # Encode reference audio → outputs a single .json voice file (any sample rate, auto-resampled to 24kHz)
@@ -432,8 +434,8 @@ Chinese · English · Deutsch · Русский · Français · 日本語 · 한
 | Talker latency | ~60ms/step | ~33ms/step |
 | Predictor latency | ~185ms/step | ~185ms/step |
 | Vocoder (ONNX FP32) | ~4.5s (CPU, clean audio) | ~4.5s |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, quantization noise) | ~2.7s |
-| RTF — ONNX (default) | ~5.0x | ~3.8x |
+| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ has noise) | ~2.7s |
+| RTF — ONNX (default) | ~4.8x | ~3.8x |
 | RTF — RKNN | ~4.2x | ~3.5x |
 | Voice encoding speed | ~2s/4s audio | ~2s/4s audio |
 | Network overhead | <5ms/step (LAN) | <5ms/step (LAN) |
