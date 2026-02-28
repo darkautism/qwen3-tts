@@ -9,6 +9,7 @@ use crate::protocol::{Request, Response};
 pub struct WorkerClient {
     stream: TcpStream,
     addr: String,
+    resp_buf: Vec<u8>,
 }
 
 impl WorkerClient {
@@ -20,7 +21,11 @@ impl WorkerClient {
             .with_context(|| format!("Failed to connect to worker at {}", addr))?;
         stream.set_nodelay(true)?;
         tracing::info!("Connected to worker at {}", addr);
-        Ok(Self { stream, addr })
+        Ok(Self {
+            stream,
+            addr,
+            resp_buf: Vec::with_capacity(16 * 1024),
+        })
     }
 
     /// Send a request and receive a response
@@ -41,11 +46,11 @@ impl WorkerClient {
             .with_context(|| format!("Worker {} disconnected", self.addr))?;
         let resp_len = u32::from_be_bytes(len_buf) as usize;
 
-        let mut resp_buf = vec![0u8; resp_len];
-        self.stream.read_exact(&mut resp_buf).await?;
+        self.resp_buf.resize(resp_len, 0);
+        self.stream.read_exact(&mut self.resp_buf).await?;
 
-        let resp: Response =
-            rmp_serde::from_slice(&resp_buf).context("Failed to deserialize worker response")?;
+        let resp: Response = rmp_serde::from_slice(&self.resp_buf)
+            .context("Failed to deserialize worker response")?;
 
         if resp.status != "ok" {
             anyhow::bail!(

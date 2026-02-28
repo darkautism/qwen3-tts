@@ -10,7 +10,6 @@ pub struct Pipeline {
     talker: WorkerClient,
     predictor: WorkerClient,
     vocoder: WorkerClient,
-    #[allow(dead_code)]
     config: Config,
 }
 
@@ -136,7 +135,6 @@ impl Pipeline {
         let eos_max_boost: f32 = d.eos_max_boost;
 
         let mut all_codes: Vec<Vec<i64>> = Vec::new();
-        let mut past_tokens: Vec<i32> = Vec::new();
         // First step uses empty feedback (talker uses its own last hidden)
         let mut feedback_b64 = encode_f32(&[0.0f32; HIDDEN_SIZE]);
         let mut first_step = true;
@@ -158,18 +156,18 @@ impl Pipeline {
 
             // Talker step → hidden_state + code_0
             let t0 = std::time::Instant::now();
+            let fb = if first_step {
+                "__first__".to_string()
+            } else {
+                std::mem::take(&mut feedback_b64)
+            };
             let talker_resp = self
                 .talker
                 .call(&Request::TalkerStep {
-                    feedback_embedding: if first_step {
-                        "__first__".into()
-                    } else {
-                        feedback_b64.clone()
-                    },
+                    feedback_embedding: fb,
                     temperature: params.temperature,
                     repetition_penalty: params.repetition_penalty,
                     eos_boost,
-                    past_tokens: past_tokens.clone(),
                 })
                 .await?;
             let talker_ms = t0.elapsed().as_millis();
@@ -192,8 +190,6 @@ impl Pipeline {
                 );
                 break;
             }
-
-            past_tokens.push(code_0);
 
             let hidden_b64 = talker_resp.data["hidden_state"]
                 .as_str()

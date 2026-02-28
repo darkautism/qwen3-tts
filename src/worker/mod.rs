@@ -43,6 +43,7 @@ struct TalkerState {
     last_hidden: Option<Array1<f32>>,
     ref_codec_tokens: Option<Array2<i64>>,
     ref_text: Option<String>,
+    past_tokens: Vec<i32>,
 }
 
 struct PredictorState {
@@ -125,6 +126,7 @@ impl Worker {
                     last_hidden: None,
                     ref_codec_tokens: None,
                     ref_text: None,
+                    past_tokens: Vec::new(),
                 })
             }
             "predictor" => {
@@ -230,13 +232,11 @@ impl Worker {
                 temperature,
                 repetition_penalty,
                 eos_boost,
-                past_tokens,
             } => self.handle_talker_step(
                 &feedback_embedding,
                 temperature,
                 repetition_penalty,
                 eos_boost,
-                &past_tokens,
             ),
             Request::CodePredict {
                 hidden_state,
@@ -331,11 +331,11 @@ impl Worker {
         temperature: f32,
         repetition_penalty: f32,
         eos_boost: f32,
-        past_tokens: &[i32],
     ) -> Result<Response> {
         let ts = self.talker_state()?;
 
         let hidden = if feedback_b64 == "__first__" {
+            ts.past_tokens.clear();
             ts.last_hidden
                 .clone()
                 .context("No hidden state from prefill")?
@@ -344,21 +344,20 @@ impl Worker {
             ts.talker.get_hidden(&feedback, 1, true)?
         };
 
-        let code_0 = ts.embedder.sample_token(
-            &hidden,
-            temperature,
-            if past_tokens.is_empty() {
-                None
-            } else {
-                Some(past_tokens)
-            },
-            repetition_penalty,
-            eos_boost,
-        );
+        let past = if ts.past_tokens.is_empty() {
+            None
+        } else {
+            Some(ts.past_tokens.as_slice())
+        };
+        let code_0 =
+            ts.embedder
+                .sample_token(&hidden, temperature, past, repetition_penalty, eos_boost);
 
         let is_eos = code_0 == 2150 || code_0 >= 2048;
         let hidden_b64 = encode_f32_slice(hidden.as_slice().unwrap());
 
+        // Track past tokens for repetition penalty
+        ts.past_tokens.push(code_0);
         // Save hidden for potential reuse
         ts.last_hidden = Some(hidden);
 

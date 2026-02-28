@@ -33,8 +33,6 @@ pub enum Request {
         temperature: f32,
         repetition_penalty: f32,
         eos_boost: f32,
-        /// Past code_0 tokens for repetition penalty
-        past_tokens: Vec<i32>,
     },
 
     /// Predict codes 1-15 from hidden state
