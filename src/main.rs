@@ -4,20 +4,20 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
-use qwen3_tts::api;
-use qwen3_tts::audio;
-use qwen3_tts::cli::{Cli, Commands, WorkerRole};
-use qwen3_tts::config::Config;
-use qwen3_tts::mcp;
-use qwen3_tts::pipeline::{Pipeline, SynthesisParams};
-use qwen3_tts::voices;
+use qwen3_tts_rs::api;
+use qwen3_tts_rs::audio;
+use qwen3_tts_rs::cli::{Cli, Commands, WorkerRole};
+use qwen3_tts_rs::config::Config;
+use qwen3_tts_rs::mcp;
+use qwen3_tts_rs::pipeline::{Pipeline, SynthesisParams};
+use qwen3_tts_rs::voices;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "qwen3_tts=info".into()),
+                .unwrap_or_else(|_| "qwen3_tts_rs=info".into()),
         )
         .init();
 
@@ -180,9 +180,9 @@ async fn cmd_worker(
     });
 
     // Auto-download missing model files
-    let role_dir = qwen3_tts::download::ensure_models(role_str, &models_dir, Some(&repo))?;
+    let role_dir = qwen3_tts_rs::download::ensure_models(role_str, &models_dir, Some(&repo))?;
 
-    qwen3_tts::worker::run_worker(&bind, role_str, role_dir.to_str().unwrap()).await
+    qwen3_tts_rs::worker::run_worker(&bind, role_str, role_dir.to_str().unwrap()).await
 }
 
 async fn cmd_mcp() -> Result<()> {
@@ -327,7 +327,7 @@ async fn cmd_encode_voice(
     info!("Encoding voice from {}", audio);
 
     let model_path = resolve_speech_tokenizer_path(&hf_model)?;
-    let tokenizer = qwen3_tts::speech_tokenizer::SpeechTokenizer::load(&model_path)?;
+    let tokenizer = qwen3_tts_rs::speech_tokenizer::SpeechTokenizer::load(&model_path)?;
     let codes = tokenizer.encode_wav(&audio)?;
     let n_tokens = codes.len();
     let n_codebooks = if n_tokens > 0 { codes[0].len() } else { 0 };

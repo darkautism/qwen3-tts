@@ -2032,7 +2032,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "qwen3-tts"
+name = "qwen3-tts-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",

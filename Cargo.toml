@@ -1,5 +1,5 @@
 [package]
-name = "qwen3-tts"
+name = "qwen3-tts-rs"
 version = "0.1.0"
 edition = "2021"
 description = "Distributed Qwen3-TTS inference on RK3588 cluster"
