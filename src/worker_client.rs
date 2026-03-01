@@ -28,38 +28,41 @@ impl WorkerClient {
         })
     }
 
-    /// Send a request and receive a response
-    pub async fn call(&mut self, req: &Request) -> Result<Response> {
+    /// Send a request without waiting for response (for pipelining)
+    pub async fn send_request(&mut self, req: &Request) -> Result<()> {
         let payload = rmp_serde::to_vec_named(req).context("Failed to serialize request")?;
-
-        // Send: [4 bytes BE length][payload]
         let len = payload.len() as u32;
         self.stream.write_all(&len.to_be_bytes()).await?;
         self.stream.write_all(&payload).await?;
         self.stream.flush().await?;
+        Ok(())
+    }
 
-        // Receive: [4 bytes BE length][payload]
+    /// Read a response (pair with send_request for pipelining)
+    pub async fn read_response(&mut self) -> Result<Response> {
         let mut len_buf = [0u8; 4];
         self.stream
             .read_exact(&mut len_buf)
             .await
             .with_context(|| format!("Worker {} disconnected", self.addr))?;
         let resp_len = u32::from_be_bytes(len_buf) as usize;
-
         self.resp_buf.resize(resp_len, 0);
         self.stream.read_exact(&mut self.resp_buf).await?;
-
         let resp: Response = rmp_serde::from_slice(&self.resp_buf)
             .context("Failed to deserialize worker response")?;
-
         if resp.status != "ok" {
             anyhow::bail!(
                 "Worker error: {}",
                 resp.error.as_deref().unwrap_or("unknown")
             );
         }
-
         Ok(resp)
+    }
+
+    /// Send a request and receive a response
+    pub async fn call(&mut self, req: &Request) -> Result<Response> {
+        self.send_request(req).await?;
+        self.read_response().await
     }
 
     pub fn addr(&self) -> &str {
@@ -69,13 +72,13 @@ impl WorkerClient {
 
 // Helper to encode binary data as base64
 pub fn encode_f32(data: &[f32]) -> String {
-    let bytes: Vec<u8> = data.iter().flat_map(|f| f.to_le_bytes()).collect();
-    B64.encode(&bytes)
+    let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
+    B64.encode(bytes)
 }
 
 pub fn encode_i64(data: &[i64]) -> String {
-    let bytes: Vec<u8> = data.iter().flat_map(|i| i.to_le_bytes()).collect();
-    B64.encode(&bytes)
+    let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
+    B64.encode(bytes)
 }
 
 pub fn decode_f32(b64: &str) -> Result<Vec<f32>> {

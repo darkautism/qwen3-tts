@@ -17,7 +17,7 @@ use ndarray_npy::read_npy;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::protocol::{Request, Response, HIDDEN_SIZE};
 
@@ -50,6 +50,7 @@ struct PredictorState {
     code_predictor: PredictorBackend,
     codec_embedding: Array2<f32>,
     tts_pad_embed: Array1<f32>,
+    feedback_buf: Array1<f32>,
 }
 
 /// Abstraction over Candle, GGML, or ONNX code predictor
@@ -182,6 +183,7 @@ impl Worker {
                 WorkerState::Predictor(PredictorState {
                     code_predictor: code_pred,
                     codec_embedding,
+                    feedback_buf: tts_pad_embed.clone(),
                     tts_pad_embed,
                 })
             }
@@ -404,15 +406,15 @@ impl Worker {
         let pred_ms = t0.elapsed().as_millis();
 
         // Feedback = tts_pad + talker_codec_embed[code_0] + sum(cp_codec_embed[gi][code_i] for i=1..15)
-        let mut feedback = ps.tts_pad_embed.clone();
-        feedback += &ps.codec_embedding.row(code_0 as usize);
+        ps.feedback_buf.assign(&ps.tts_pad_embed);
+        ps.feedback_buf += &ps.codec_embedding.row(code_0 as usize);
         for (gi, &c) in predicted.iter().enumerate() {
-            feedback += &ps.code_predictor.codec_embeddings()[gi].row(c as usize);
+            ps.feedback_buf += &ps.code_predictor.codec_embeddings()[gi].row(c as usize);
         }
-        info!("code_predict: {}ms (code_0={})", pred_ms, code_0);
+        debug!("code_predict: {}ms (code_0={})", pred_ms, code_0);
 
         let codes_json: Vec<i64> = predicted.iter().map(|&c| c as i64).collect();
-        let feedback_b64 = encode_f32_slice(feedback.as_slice().unwrap());
+        let feedback_b64 = encode_f32_slice(ps.feedback_buf.as_slice().unwrap());
 
         ok(serde_json::json!({
             "codes": codes_json,
@@ -525,7 +527,7 @@ pub async fn run_worker(bind: &str, role: &str, models_dir: &str) -> Result<()> 
                 Request::Vocode { .. } => "vocode",
                 Request::LoadVoice { .. } => "load_voice",
             };
-            info!("Handling request: {}", method_name);
+            debug!("Handling request: {}", method_name);
 
             // Handle (with panic guard for FFI crashes)
             let resp = worker.handle_request(req).await;
@@ -560,8 +562,9 @@ fn ok(data: serde_json::Value) -> Result<Response> {
 }
 
 fn encode_f32_slice(data: &[f32]) -> String {
-    let bytes: Vec<u8> = data.iter().flat_map(|f| f.to_le_bytes()).collect();
-    B64.encode(&bytes)
+    // Safety: f32 slice has compatible alignment and layout for u8 view
+    let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
+    B64.encode(bytes)
 }
 
 fn decode_f32_vec(b64: &str) -> Result<Vec<f32>> {

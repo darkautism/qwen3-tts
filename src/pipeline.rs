@@ -138,6 +138,9 @@ impl Pipeline {
         // First step uses empty feedback (talker uses its own last hidden)
         let mut feedback_b64 = encode_f32(&[0.0f32; HIDDEN_SIZE]);
         let mut first_step = true;
+        // Vocoder streaming: send partial batches during generation
+        let vocode_chunk_size = 64usize;
+        let mut vocode_batches_sent = 0usize;
 
         for i in 0..params.max_tokens {
             if i >= eos_force {
@@ -225,6 +228,29 @@ impl Pipeline {
             token_codes.extend_from_slice(&codes_1_15);
             all_codes.push(token_codes);
 
+            // Vocoder streaming: send partial batch when we have enough tokens
+            if all_codes.len() >= (vocode_batches_sent + 1) * vocode_chunk_size {
+                let batch_start = vocode_batches_sent * vocode_chunk_size;
+                let batch_end = (vocode_batches_sent + 1) * vocode_chunk_size;
+                let batch_codes: Vec<i64> = all_codes[batch_start..batch_end]
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .collect();
+                let batch_n = batch_end - batch_start;
+                debug!(
+                    "Vocoder streaming: sending batch {} ({} tokens)",
+                    vocode_batches_sent, batch_n
+                );
+                self.vocoder
+                    .send_request(&Request::Vocode {
+                        codes: encode_i64(&batch_codes),
+                        n_tokens: batch_n,
+                    })
+                    .await?;
+                vocode_batches_sent += 1;
+            }
+
             if (i + 1) % 10 == 0 {
                 let elapsed = start.elapsed().as_secs_f32();
                 let rate = (i + 1) as f32 / elapsed;
@@ -252,21 +278,50 @@ impl Pipeline {
             anyhow::bail!("No tokens generated");
         }
 
-        // Phase 4: Vocoder → audio
-        info!("Running vocoder...");
-        let flat_codes: Vec<i64> = all_codes.iter().flatten().copied().collect();
-        let voc_resp = self
-            .vocoder
-            .call(&Request::Vocode {
-                codes: encode_i64(&flat_codes),
-                n_tokens,
-            })
-            .await?;
+        // Phase 4: Vocoder — collect streamed batches + send remainder
+        info!(
+            "Running vocoder ({} batches pre-sent)...",
+            vocode_batches_sent
+        );
+        let mut all_audio_i16: Vec<i16> = Vec::new();
 
-        let audio_b64 = voc_resp.data["audio"]
-            .as_str()
-            .context("Missing audio data")?;
-        let audio_i16 = decode_i16(audio_b64)?;
+        // Collect responses from batches sent during generation
+        for batch_idx in 0..vocode_batches_sent {
+            let voc_resp = self.vocoder.read_response().await?;
+            let audio_b64 = voc_resp.data["audio"]
+                .as_str()
+                .context("Missing audio data in streamed batch")?;
+            let batch_audio = decode_i16(audio_b64)?;
+            debug!(
+                "Vocoder batch {} received: {} samples",
+                batch_idx,
+                batch_audio.len()
+            );
+            all_audio_i16.extend_from_slice(&batch_audio);
+        }
+
+        // Send remaining tokens that didn't fill a full batch
+        let sent_tokens = vocode_batches_sent * vocode_chunk_size;
+        if sent_tokens < n_tokens {
+            let remaining_codes: Vec<i64> =
+                all_codes[sent_tokens..].iter().flatten().copied().collect();
+            let remaining_n = n_tokens - sent_tokens;
+            debug!("Vocoder: sending remaining {} tokens", remaining_n);
+            let voc_resp = self
+                .vocoder
+                .call(&Request::Vocode {
+                    codes: encode_i64(&remaining_codes),
+                    n_tokens: remaining_n,
+                })
+                .await?;
+            let audio_b64 = voc_resp.data["audio"]
+                .as_str()
+                .context("Missing audio data")?;
+            let remaining_audio = decode_i16(audio_b64)?;
+            all_audio_i16.extend_from_slice(&remaining_audio);
+        }
+
+        let audio_i16 = all_audio_i16;
 
         let total_time = start.elapsed();
         let audio_duration = audio_i16.len() as f32 / SAMPLE_RATE as f32;
