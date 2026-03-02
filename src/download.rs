@@ -21,7 +21,7 @@ const TALKER_FILES: &[&str] = &[
 
 /// Files needed for the predictor role
 const PREDICTOR_FILES: &[&str] = &[
-    "predictor/code_predictor/qwen3-tts-0.6b-q8_0.gguf",
+    "predictor/code_predictor/code-predictor-q8_0.gguf",
     "predictor/code_predictor/code_predictor_weights.npz",
     "predictor/embeddings/codec_embedding.npy",
     "predictor/embeddings/tts_pad_embed.npy",
@@ -34,18 +34,30 @@ const VOCODER_FILES: &[&str] = &["vocoder/vocoder.rknn"];
 #[cfg(not(feature = "rknn-vocoder"))]
 const VOCODER_FILES: &[&str] = &["vocoder/vocoder.onnx"];
 
+/// Extra file for Q4 predictor quantization
+const PREDICTOR_Q4_FILE: &str = "predictor/code_predictor/code-predictor-q4_0.gguf";
+
 /// Download models for a specific role from HuggingFace Hub.
 /// Returns the path to the role's model directory.
 pub fn ensure_models(role: &str, models_dir: &Path, repo_id: Option<&str>) -> Result<PathBuf> {
     let repo = repo_id.unwrap_or(DEFAULT_REPO);
     let role_dir = models_dir.join(role);
 
-    let files = match role {
-        "talker" => TALKER_FILES,
-        "predictor" => PREDICTOR_FILES,
-        "vocoder" => VOCODER_FILES,
+    let mut files: Vec<&str> = match role {
+        "talker" => TALKER_FILES.to_vec(),
+        "predictor" => PREDICTOR_FILES.to_vec(),
+        "vocoder" => VOCODER_FILES.to_vec(),
         _ => anyhow::bail!("Unknown role: {}", role),
     };
+
+    // Download Q4 GGUF when quant preference is q4
+    if role == "predictor" {
+        if let Ok(q) = std::env::var("QWEN3_TTS_QUANT") {
+            if q == "q4" {
+                files.push(PREDICTOR_Q4_FILE);
+            }
+        }
+    }
 
     // Check if all files exist
     let missing: Vec<&&str> = files

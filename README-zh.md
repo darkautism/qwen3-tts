@@ -404,8 +404,9 @@ kautism/qwen3-tts-rk3588/
 │   └── embeddings/               (~1.2 GB)
 ├── predictor/                     # Predictor Worker
 │   ├── code_predictor/
-│   ├── qwen3-tts-0.6b-q8_0.gguf  (1.3 GB, Candle GGUF Q8_0)
-│   │   └── config.json
+│   │   ├── code-predictor-q8_0.gguf  (206 MB, 精簡版 — 預設下載)
+│   │   ├── code-predictor-q4_0.gguf  (169 MB, 精簡 Q4 — 搭配 --quant q4)
+│   │   └── qwen3-tts-0.6b-q8_0.gguf (1.3 GB, 完整模型 — 不建議)
 │   └── embeddings/
 ├── vocoder/                       # Vocoder Worker
 │   ├── vocoder.onnx              (436 MB, FP32 CPU — 預設)
@@ -415,6 +416,7 @@ kautism/qwen3-tts-rk3588/
 ```
 
 Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
+Predictor 搭配 `--quant q4` 可額外下載 Q4 模型 (169MB，快 ~16%)。
 
 ## 支援語言
 
@@ -422,24 +424,33 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 
 ## 效能
 
-於 2× RK3588 (4×A76+4×A55) 千兆網路環境測試，使用 `--big-cores` 啟動 Worker：
+於 RK3588 (4×A76 + 4×A55) 測試，使用 `--big-cores --quant q4` 啟動 Worker：
 
-| 指標 | 數值 |
-|------|------|
-| Token 生成速率 | **~5.5 tok/s** |
-| Talker 延遲 | ~40ms/step |
-| Predictor 延遲 | **~108ms/step** |
-| Vocoder (ONNX FP32) | ~4.5s (CPU, 無雜音) |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ 有雜音) |
-| **RTF (2 機)** | **~3.1x** |
-| 語音編碼速度 | ~2s/4s audio |
-| 網路開銷 | <5ms/step (LAN) |
-| 外部依賴 | 僅需 `libonnxruntime.so` |
+### 單機 vs 雙機
+
+| 測試 | 1× RK3588 | 2× RK3588 (LAN) | 提升 |
+|------|-----------|------------------|------|
+| SHORT (~40 tokens) | 3.30× | **2.99×** | 9% |
+| MEDIUM (~175 tokens) | 2.87× | **2.61×** | 9% |
+| LONG (200 tokens) | 3.31× | **2.99×** | 10% |
+
+第二台機器分擔 predictor + vocoder，讓第一台 4 顆 A76 專供 talker 使用。
+單機部署簡單方便；加一台可降低約 10% RTF。
+
+| 指標 | 1 機 | 2 機 |
+|------|------|------|
+| Token 生成速率 | ~4.9 tok/s | **~5.5 tok/s** |
+| Talker 延遲 | ~35ms/step | ~35ms/step |
+| Predictor 延遲 | ~93ms/step | ~93ms/step |
+| Vocoder (ONNX FP32) | ~4.5s/batch (無雜音) | ~4.5s/batch |
+| Vocoder (RKNN INT8) | ~2.7s/batch (⚠️ 有雜音) | ~2.7s/batch |
+| **最佳 MEDIUM RTF** | 2.87× | **2.61×** |
+| 外部依賴 | 僅需 `libonnxruntime.so` | 同上 |
 
 > RTF = 生成時間 / 音訊時間。越低越好，RTF < 1 為即時。
 >
 > **重要：** 在 big.LITTLE SoC（如 RK3588）上，務必使用 `--big-cores` 啟動 worker。
-> 否則 rayon 會將矩陣運算分配到慢速 A55 核心，predictor 延遲從 108ms 退化到 190ms。
+> 否則 rayon 會將矩陣運算分配到慢速 A55 核心，predictor 從 93ms 退化到 190ms。
 
 ### 優化歷程
 

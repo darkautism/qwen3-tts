@@ -202,11 +202,11 @@ async fn cmd_worker(
             .join("models")
     });
 
+    // Set quant preference as env var for worker and download to pick up
+    std::env::set_var("QWEN3_TTS_QUANT", &quant);
+
     // Auto-download missing model files
     let role_dir = qwen3_tts_rs::download::ensure_models(role_str, &models_dir, Some(&repo))?;
-
-    // Set quant preference as env var for worker to pick up
-    std::env::set_var("QWEN3_TTS_QUANT", &quant);
 
     qwen3_tts_rs::worker::run_worker(&bind, role_str, role_dir.to_str().unwrap()).await
 }

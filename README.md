@@ -404,8 +404,9 @@ kautism/qwen3-tts-rk3588/
 │   └── embeddings/               (~1.2 GB)
 ├── predictor/                     # Predictor Worker
 │   ├── code_predictor/
-│   │   ├── code-predictor-q8_0.gguf  (206 MB, stripped — recommended)
-│   │   └── qwen3-tts-0.6b-q8_0.gguf (1.3 GB, full model)
+│   │   ├── code-predictor-q8_0.gguf  (206 MB, stripped — default download)
+│   │   ├── code-predictor-q4_0.gguf  (169 MB, stripped Q4 — use --quant q4)
+│   │   └── qwen3-tts-0.6b-q8_0.gguf (1.3 GB, full model — not recommended)
 │   └── embeddings/
 ├── vocoder/                       # Vocoder Worker
 │   ├── vocoder.onnx              (436 MB, FP32 CPU — default)
@@ -415,6 +416,7 @@ kautism/qwen3-tts-rk3588/
 ```
 
 Workers auto-download their role's models from HuggingFace Hub on first start.
+Pass `--quant q4` to predictor workers to also download the Q4 model (169MB, ~16% faster).
 
 ## Supported Languages
 
@@ -422,24 +424,33 @@ Chinese · English · Deutsch · Русский · Français · 日本語 · 한
 
 ## Performance
 
-Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN, workers started with `--big-cores`:
+Tested on RK3588 (4×A76 + 4×A55), workers started with `--big-cores --quant q4`:
 
-| Metric | Value |
-|--------|-------|
-| Token generation rate | **~5.5 tok/s** |
-| Talker latency | ~40ms/step |
-| Predictor latency | **~108ms/step** |
-| Vocoder (ONNX FP32) | ~4.5s (CPU, clean audio) |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ has noise) |
-| **RTF (2 machines)** | **~3.1x** |
-| Voice encoding speed | ~2s/4s audio |
-| Network overhead | <5ms/step (LAN) |
-| External dependencies | `libonnxruntime.so` only |
+### Single Machine vs Two Machines
+
+| Test | 1× RK3588 | 2× RK3588 (LAN) | Improvement |
+|------|-----------|------------------|-------------|
+| SHORT (~40 tokens) | 3.30× | **2.99×** | 9% |
+| MEDIUM (~175 tokens) | 2.87× | **2.61×** | 9% |
+| LONG (200 tokens) | 3.31× | **2.99×** | 10% |
+
+The second machine offloads predictor + vocoder, freeing all 4 A76 cores on machine 1 for the talker.
+Single-machine works well for simple deployments; adding a second board reduces RTF by ~10%.
+
+| Metric | 1 Machine | 2 Machines |
+|--------|-----------|------------|
+| Token rate | ~4.9 tok/s | **~5.5 tok/s** |
+| Talker latency | ~35ms/step | ~35ms/step |
+| Predictor latency | ~93ms/step | ~93ms/step |
+| Vocoder (ONNX FP32) | ~4.5s/batch | ~4.5s/batch |
+| Vocoder (RKNN INT8) | ~2.7s/batch (⚠️ has noise) | ~2.7s/batch |
+| **Best MEDIUM RTF** | 2.87× | **2.61×** |
+| External dependencies | `libonnxruntime.so` only | same |
 
 > RTF = generation time / audio duration. Lower is better; RTF < 1 is real-time.
 >
 > **Important:** On big.LITTLE SoCs (e.g., RK3588), always start workers with `--big-cores` to avoid slow small cores.
-> Without it, rayon distributes matmul to slow A55 cores → predictor degrades from 108ms to 190ms.
+> Without it, rayon distributes matmul to slow A55 cores → predictor degrades from 93ms to 190ms.
 
 ### Optimization Journey
 
