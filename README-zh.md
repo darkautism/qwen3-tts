@@ -1,5 +1,7 @@
 <div align="center">
 
+![banner](doc/images/banner.png)
+
 # qwen3-tts
 
 分散式 Qwen3-TTS 語音合成系統，專為低成本 SBC 叢集設計的 Rust 實作。
@@ -11,6 +13,11 @@
 
 [![][license-shield]][license-shield-link]
 [![][last-commit-shield]][last-commit-shield-link]
+
+
+We have WebUI Now!
+
+![webui](doc/images/webui.jpg)
 
 </div>
 
