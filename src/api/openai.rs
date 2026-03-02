@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
 use crate::config::Config;
-use crate::pipeline::{InlineVoiceData, Pipeline, SynthesisParams};
+use crate::pipeline::{ChunkMode, InlineVoiceData, Pipeline, SynthesisParams};
 
 static INDEX_HTML: &str = include_str!("static/index.html");
 
@@ -45,6 +45,8 @@ pub struct CreateSpeechRequest {
     pub language: Option<String>,
     /// Inline voice data (codec_tokens + ref_text) from web UI
     pub voice_data: Option<VoiceDataPayload>,
+    /// Text chunking mode: "none", "2" (default), "4"
+    pub chunk_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +110,13 @@ async fn create_speech(
         (None, None)
     };
 
+    let chunk_mode = req
+        .chunk_mode
+        .as_deref()
+        .unwrap_or("2")
+        .parse::<ChunkMode>()
+        .unwrap_or_default();
+
     let params = SynthesisParams {
         text: req.input,
         language,
@@ -117,6 +126,7 @@ async fn create_speech(
         temperature: config.defaults.temperature,
         cp_temperature: config.defaults.cp_temperature,
         repetition_penalty: config.defaults.repetition_penalty,
+        chunk_mode,
     };
 
     let mut pipeline = state.pipeline.lock().await;

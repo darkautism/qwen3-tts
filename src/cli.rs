@@ -33,6 +33,10 @@ pub enum Commands {
         /// Max tokens to generate
         #[arg(long)]
         max_tokens: Option<usize>,
+
+        /// Text chunking mode: none, 2 (default, split every 2 punctuation), 4
+        #[arg(long, default_value = "2")]
+        chunk: String,
     },
 
     /// Start API server (OpenAI-compatible + MCP)

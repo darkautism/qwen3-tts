@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 use crate::audio;
 use crate::config::Config;
-use crate::pipeline::{Pipeline, SynthesisParams};
+use crate::pipeline::{ChunkMode, Pipeline, SynthesisParams};
 
 /// MCP server using stdio JSON-RPC transport
 pub struct McpServer {
@@ -135,6 +135,12 @@ impl McpServer {
                                     "voice": {
                                         "type": "string",
                                         "description": "Path to voice profile file (.json from encode-voice). Create with `qwen3-tts encode-voice -a audio.wav -r \"text\" -o voice.json`."
+                                    },
+                                    "chunk_mode": {
+                                        "type": "string",
+                                        "description": "Text chunking for long text: 'none' (no split), '2' (every 2 punctuation, default), '4' (every 4)",
+                                        "enum": ["none", "2", "4"],
+                                        "default": "2"
                                     }
                                 },
                                 "required": ["text"]
@@ -210,6 +216,12 @@ impl McpServer {
             None => None,
         };
 
+        let chunk_mode = args["chunk_mode"]
+            .as_str()
+            .unwrap_or("2")
+            .parse::<ChunkMode>()
+            .unwrap_or_default();
+
         let params = SynthesisParams {
             text,
             language,
@@ -219,6 +231,7 @@ impl McpServer {
             temperature: self.config.defaults.temperature,
             cp_temperature: self.config.defaults.cp_temperature,
             repetition_penalty: self.config.defaults.repetition_penalty,
+            chunk_mode,
         };
 
         let mut pipeline = self.pipeline.lock().await;
