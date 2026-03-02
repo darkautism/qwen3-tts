@@ -119,8 +119,8 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 # IP1 - Talker Worker（在 big.LITTLE SoC 如 RK3588 上使用 --big-cores）
 qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
-# IP2 - Predictor Worker
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+# IP2 - Predictor Worker（Q4 量化以獲得最快速度）
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
 
 # IP2 - Vocoder Worker (可以和 Predictor 同一台)
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
@@ -421,6 +421,73 @@ Predictor 搭配 `--quant q4` 可額外下載 Q4 模型 (169MB，快 ~16%)。
 ## 支援語言
 
 中文 · English · Deutsch · Русский · Français · 日本語 · 한국어
+
+## 加速指南
+
+以下優化按影響力排序，逐步套用可將 RTF 從 4.96× 降至 2.61×：
+
+### 1. 使用 `--big-cores`（big.LITTLE SoC 必備）
+
+```bash
+# 將所有執行緒綁定到效能核心（如 RK3588 的 A76）
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+```
+
+不加此選項，rayon 會將矩陣運算分配到慢速核心 → **慢 ~43%**。
+
+### 2. 使用 Q4 量化（`--quant q4`）
+
+```bash
+# Q4 模型 169MB，比 Q8 的 206MB 更小。預測快 16%，品質相當。
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+```
+
+指定 `--quant q4` 後會自動從 HuggingFace Hub 下載 Q4 GGUF。
+
+### 3. 跨機器分散部署
+
+```bash
+# 機器 1：只跑 talker（獨享 4 顆大核心）
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+
+# 機器 2：predictor + vocoder（獨享另外 4 顆大核心）
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+```
+
+編輯 `qwen3-tts.toml` 指向遠端 worker：
+```toml
+[workers.talker]
+host = "192.168.1.10"   # 機器 1
+port = 9090
+
+[workers.predictor]
+host = "192.168.1.11"   # 機器 2
+port = 9091
+
+[workers.vocoder]
+host = "192.168.1.11"   # 機器 2
+port = 9092
+```
+
+消除核心競爭，RTF 再降 ~10%。
+
+### 4. 編譯時啟用 SDOT（ARM dotprod）
+
+```bash
+# 啟用 ARM SDOT 指令，加速量化矩陣乘法
+RUSTFLAGS='-C target-feature=+dotprod' cargo build --release
+```
+
+Cortex-A76 及更新的核心必備。否則量化推理使用較慢的 vmull+vpaddl 路徑。
+
+### 累積效果
+
+| 優化 | MEDIUM RTF | 加速 |
+|------|-----------|------|
+| 預設（無優化） | 4.96× | 基準 |
+| + `--big-cores` + Q4 + SDOT | 2.87× | **快 42%** |
+| + 雙機分散部署 | **2.61×** | **快 47%** |
 
 ## 效能
 

@@ -121,8 +121,8 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 # IP1 - Talker Worker (use --big-cores on big.LITTLE SoCs like RK3588)
 qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
-# IP2 - Predictor Worker
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+# IP2 - Predictor Worker (Q4 quantization for max speed)
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
 
 # IP2 - Vocoder Worker (can share machine with Predictor)
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
@@ -421,6 +421,73 @@ Pass `--quant q4` to predictor workers to also download the Q4 model (169MB, ~16
 ## Supported Languages
 
 Chinese · English · Deutsch · Русский · Français · 日本語 · 한국어
+
+## Speed Optimization Guide
+
+To achieve the best RTF on ARM SBCs, apply these optimizations (in order of impact):
+
+### 1. Use `--big-cores` (essential on big.LITTLE SoCs)
+
+```bash
+# Pins all threads to performance cores (e.g., A76 on RK3588)
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+```
+
+Without this, rayon distributes matmul work to slow efficiency cores → **~43% slower**.
+
+### 2. Use Q4 quantization (`--quant q4`)
+
+```bash
+# Q4 model is 169MB vs 206MB for Q8. 16% faster prediction, comparable quality.
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+```
+
+The Q4 GGUF is auto-downloaded from HuggingFace Hub when `--quant q4` is specified.
+
+### 3. Distribute workers across machines
+
+```bash
+# Machine 1: talker only (gets all 4 big cores to itself)
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+
+# Machine 2: predictor + vocoder (their own 4 big cores)
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+```
+
+Edit `qwen3-tts.toml` to point to remote workers:
+```toml
+[workers.talker]
+host = "192.168.1.10"   # Machine 1
+port = 9090
+
+[workers.predictor]
+host = "192.168.1.11"   # Machine 2
+port = 9091
+
+[workers.vocoder]
+host = "192.168.1.11"   # Machine 2
+port = 9092
+```
+
+This eliminates core contention and gives ~10% RTF improvement.
+
+### 4. Build with SDOT (ARM dotprod)
+
+```bash
+# Enable ARM SDOT instruction for faster quantized matmul
+RUSTFLAGS='-C target-feature=+dotprod' cargo build --release
+```
+
+This is critical on Cortex-A76 and newer cores. Without it, quantized inference uses a slower vmull+vpaddl path.
+
+### Summary: Cumulative Effect
+
+| What | MEDIUM RTF | Speedup |
+|------|-----------|---------|
+| Default (no optimization) | 4.96× | baseline |
+| + `--big-cores` + Q4 + SDOT | 2.87× | **42% faster** |
+| + distribute to 2 machines | **2.61×** | **47% faster** |
 
 ## Performance
 

@@ -91,4 +91,4 @@ ggml-backend = ["dep:libloading"]  # Use C++ GGML for both talker and predictor 
 ggml-predictor = []  # Use C++ GGML only for code predictor (3x faster on ARM, needs libcode_pred_ggml.a)
 
 [patch.crates-io]
-candle-core = { path = "../candle-core-patched" }
+candle-core = { git = "https://github.com/darkautism/candle.git", branch = "feat/aarch64-sdot" }
