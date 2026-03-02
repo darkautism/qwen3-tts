@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Multipart, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -29,6 +29,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/models", get(list_models))
         .route("/health", get(health))
         .route("/api/config", get(get_config).post(update_config))
+        .route("/api/encode-voice", post(encode_voice))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -121,6 +122,8 @@ async fn create_speech(
     let mut pipeline = state.pipeline.lock().await;
     match pipeline.synthesize(&params).await {
         Ok(result) => {
+            let audio_duration = result.audio_samples.len() as f32 / result.sample_rate as f32;
+
             // Encode as WAV in memory
             let spec = hound::WavSpec {
                 channels: 1,
@@ -139,7 +142,13 @@ async fn create_speech(
 
             (
                 StatusCode::OK,
-                [(header::CONTENT_TYPE, "audio/wav")],
+                [
+                    (header::CONTENT_TYPE, "audio/wav".to_string()),
+                    (
+                        header::HeaderName::from_static("x-audio-duration"),
+                        format!("{:.2}", audio_duration),
+                    ),
+                ],
                 buf.into_inner(),
             )
                 .into_response()
@@ -243,6 +252,76 @@ async fn update_config(
                 "error": format!("Config saved but reconnect failed: {}. Workers may be offline.", e)
             });
             (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+        }
+    }
+}
+
+async fn encode_voice(
+    State(_state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut audio_data: Option<Vec<u8>> = None;
+    let mut ref_text: Option<String> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "audio" => {
+                audio_data = field.bytes().await.ok().map(|b| b.to_vec());
+            }
+            "ref_text" => {
+                ref_text = field.text().await.ok();
+            }
+            _ => {}
+        }
+    }
+
+    let audio_bytes = match audio_data {
+        Some(d) if !d.is_empty() => d,
+        _ => {
+            let body = serde_json::json!({"error": "Missing 'audio' field (WAV file)"});
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
+    };
+    let ref_text = match ref_text {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            let body = serde_json::json!({"error": "Missing 'ref_text' field"});
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
+    };
+
+    // Write to temp file, encode, clean up
+    let tmp_path = format!("/tmp/qwen3_encode_{}.wav", std::process::id());
+    if let Err(e) = std::fs::write(&tmp_path, &audio_bytes) {
+        let body = serde_json::json!({"error": format!("Failed to write temp file: {}", e)});
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let model_path = crate::speech_tokenizer::resolve_model_path("kautism/qwen3-tts-rk3588")?;
+        let tokenizer = crate::speech_tokenizer::SpeechTokenizer::load(&model_path)?;
+        let codes = tokenizer.encode_wav(&tmp_path)?;
+        let _ = std::fs::remove_file(&tmp_path);
+        Ok::<_, anyhow::Error>(codes)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(codes)) => {
+            let body = serde_json::json!({
+                "ref_text": ref_text,
+                "codec_tokens": codes,
+            });
+            (StatusCode::OK, Json(body)).into_response()
+        }
+        Ok(Err(e)) => {
+            let body = serde_json::json!({"error": format!("Encode failed: {}", e)});
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+        }
+        Err(e) => {
+            let body = serde_json::json!({"error": format!("Task failed: {}", e)});
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
         }
     }
 }

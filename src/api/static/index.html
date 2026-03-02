@@ -9,8 +9,8 @@
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#212121;color:#ececec;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .container{width:100%;max-width:680px;padding:24px}
 h1{font-size:1.4rem;font-weight:600;margin-bottom:24px;text-align:center;color:#fff}
-.controls{display:flex;gap:12px;margin-bottom:16px;align-items:center}
-select{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #444;background:#2a2a2a;color:#ececec;font-size:14px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.controls{display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
+select{flex:1;min-width:0;padding:10px 12px;border-radius:8px;border:1px solid #444;background:#2a2a2a;color:#ececec;font-size:14px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
 select:focus{outline:none;border-color:#10a37f}
 .input-wrap{position:relative;margin-bottom:16px}
 textarea{width:100%;min-height:120px;padding:16px;padding-right:56px;border-radius:12px;border:1px solid #444;background:#2a2a2a;color:#ececec;font-size:15px;line-height:1.5;resize:vertical;font-family:inherit}
@@ -23,14 +23,16 @@ textarea::placeholder{color:#888}
 .result{margin-top:16px;text-align:center}
 audio{width:100%;margin-top:8px;border-radius:8px}
 .status{font-size:13px;color:#888;margin-top:8px;min-height:20px}
-.lang-select{width:120px;flex:none}
+.lang-select{width:110px;flex:none}
+.icon-btn{padding:8px;border-radius:8px;border:1px solid #444;background:#2a2a2a;color:#ccc;cursor:pointer;font-size:16px;line-height:1;flex:none}
+.icon-btn:hover{background:#333;border-color:#10a37f}
 .settings-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
 .settings-modal.open{display:flex}
 .settings-box{background:#2a2a2a;border:1px solid #444;border-radius:16px;padding:24px;width:90%;max-width:560px;max-height:90vh;overflow-y:auto}
 .settings-box h2{font-size:1.1rem;margin-bottom:12px;color:#fff}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:13px;color:#aaa;margin-bottom:4px}
-.field input{width:100%;padding:8px 12px;border-radius:8px;border:1px solid #444;background:#333;color:#ececec;font-size:14px}
+.field input,.field select{width:100%;padding:8px 12px;border-radius:8px;border:1px solid #444;background:#333;color:#ececec;font-size:14px}
 .field input:focus{outline:none;border-color:#10a37f}
 .field-row{display:flex;gap:8px}
 .field-row .field{flex:1}
@@ -41,12 +43,23 @@ audio{width:100%;margin-top:8px;border-radius:8px}
 .btn-primary:hover{background:#0d8c6d}
 .btn-secondary{background:#444;color:#ccc}
 .btn-secondary:hover{background:#555}
+.btn-danger{background:#c0392b;color:#fff}
+.btn-danger:hover{background:#a93226}
 .instructions{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:#999;line-height:1.6}
 .instructions code{background:#333;padding:2px 6px;border-radius:4px;color:#10a37f;font-size:11px}
 .instructions h3{color:#ccc;font-size:13px;margin-bottom:8px}
 .save-status{font-size:12px;margin-top:8px;min-height:16px}
 .save-status.ok{color:#10a37f}
 .save-status.err{color:#e74c3c}
+.voice-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+.voice-modal.open{display:flex}
+.custom-voices-list{margin-top:8px;max-height:120px;overflow-y:auto}
+.cv-item{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;font-size:12px;border-bottom:1px solid #333}
+.cv-item .cv-del{color:#c0392b;cursor:pointer;font-size:11px;margin-left:8px}
+.cv-item .cv-del:hover{text-decoration:underline}
+.drop-zone{border:2px dashed #444;border-radius:8px;padding:20px;text-align:center;color:#888;font-size:13px;cursor:pointer;transition:border-color .15s}
+.drop-zone:hover,.drop-zone.drag{border-color:#10a37f;color:#10a37f}
+.drop-zone input{display:none}
 </style>
 </head>
 <body>
@@ -65,7 +78,8 @@ audio{width:100%;margin-top:8px;border-radius:8px}
       <option value="japanese">Japanese</option>
       <option value="korean">Korean</option>
     </select>
-    <button class="btn btn-secondary" onclick="openSettings()" title="Settings">⚙️</button>
+    <button class="icon-btn" onclick="openVoiceModal()" title="Create voice">＋</button>
+    <button class="icon-btn" onclick="openSettings()" title="Settings">⚙️</button>
   </div>
 
   <div class="input-wrap">
@@ -77,6 +91,45 @@ audio{width:100%;margin-top:8px;border-radius:8px}
 
   <div class="result" id="result"></div>
   <div class="status" id="status"></div>
+</div>
+
+<!-- Create Voice modal -->
+<div class="voice-modal" id="voiceModal">
+  <div class="settings-box">
+    <h2>🎤 Create Voice Profile</h2>
+    <p style="font-size:12px;color:#888;margin-bottom:12px">
+      Upload a short WAV clip (3-10s) of the target voice and provide its transcription.
+    </p>
+
+    <div class="field">
+      <label>Reference Audio (WAV)</label>
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('audioFile').click()">
+        <span id="dropLabel">Drop WAV file here or click to browse</span>
+        <input type="file" id="audioFile" accept=".wav,audio/wav">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Reference Text (transcription of the audio)</label>
+      <input id="voiceRefText" type="text" placeholder="The exact words spoken in the audio clip">
+    </div>
+
+    <div class="field">
+      <label>Voice Name</label>
+      <input id="voiceName" type="text" placeholder="e.g. my-voice-neutral">
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="createVoice()">Create</button>
+      <button class="btn btn-secondary" onclick="closeVoiceModal()">Cancel</button>
+    </div>
+    <div class="save-status" id="voiceStatus"></div>
+
+    <div style="margin-top:16px">
+      <h3 style="color:#ccc;font-size:13px;margin-bottom:4px">My Voices</h3>
+      <div class="custom-voices-list" id="customVoicesList"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Settings modal -->
@@ -125,11 +178,48 @@ audio{width:100%;margin-top:8px;border-radius:8px}
 <script>
 const VOICES_HF = 'https://huggingface.co/api/models/kautism/qwen3_tts_voices_json/tree/main';
 const voiceCache = {};
+const DB_NAME = 'qwen3tts';
+const DB_STORE = 'voices';
 
-function getApiBase() {
-  return '';
+// ---- IndexedDB helpers ----
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE, { keyPath: 'name' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function getAllCustomVoices() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const store = tx.objectStore(DB_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveCustomVoice(name, data) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put({ name, ...data });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function deleteCustomVoice(name) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).delete(name);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
+// ---- Settings ----
 function openSettings() {
   loadConfig();
   document.getElementById('settingsModal').classList.add('open');
@@ -138,10 +228,9 @@ function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
   document.getElementById('saveStatus').textContent = '';
 }
-
 async function loadConfig() {
   try {
-    const resp = await fetch(getApiBase() + '/api/config');
+    const resp = await fetch('/api/config');
     if (!resp.ok) return;
     const c = await resp.json();
     document.getElementById('cfgTalkerHost').value = c.talker_host || '';
@@ -150,16 +239,11 @@ async function loadConfig() {
     document.getElementById('cfgPredictorPort').value = c.predictor_port || '';
     document.getElementById('cfgVocoderHost').value = c.vocoder_host || '';
     document.getElementById('cfgVocoderPort').value = c.vocoder_port || '';
-  } catch (e) {
-    console.warn('Failed to load config:', e);
-  }
+  } catch (e) { console.warn('loadConfig:', e); }
 }
-
 async function saveConfig() {
   const ss = document.getElementById('saveStatus');
-  ss.className = 'save-status';
-  ss.textContent = 'Saving...';
-
+  ss.className = 'save-status'; ss.textContent = 'Saving...';
   const payload = {
     talker_host: document.getElementById('cfgTalkerHost').value,
     talker_port: parseInt(document.getElementById('cfgTalkerPort').value) || 9090,
@@ -168,29 +252,112 @@ async function saveConfig() {
     vocoder_host: document.getElementById('cfgVocoderHost').value,
     vocoder_port: parseInt(document.getElementById('cfgVocoderPort').value) || 9092,
   };
-
   try {
-    const resp = await fetch(getApiBase() + '/api/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
+    const resp = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const data = await resp.json();
-    if (resp.ok) {
-      ss.className = 'save-status ok';
-      ss.textContent = '✓ ' + (data.message || 'Saved');
-    } else {
-      ss.className = 'save-status err';
-      ss.textContent = '✗ ' + (data.error || 'Failed');
-    }
-  } catch (e) {
-    ss.className = 'save-status err';
-    ss.textContent = '✗ ' + e.message;
-  }
+    ss.className = resp.ok ? 'save-status ok' : 'save-status err';
+    ss.textContent = resp.ok ? ('✓ ' + (data.message||'Saved')) : ('✗ ' + (data.error||'Failed'));
+  } catch (e) { ss.className='save-status err'; ss.textContent='✗ '+e.message; }
 }
 
-async function loadVoices() {
+// ---- Voice creation ----
+function openVoiceModal() {
+  document.getElementById('voiceModal').classList.add('open');
+  renderCustomVoicesList();
+}
+function closeVoiceModal() {
+  document.getElementById('voiceModal').classList.remove('open');
+  document.getElementById('voiceStatus').textContent = '';
+}
+
+// Drag & drop
+const dropZone = document.getElementById('dropZone');
+const audioFile = document.getElementById('audioFile');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag');
+  if (e.dataTransfer.files.length) { audioFile.files = e.dataTransfer.files; updateDropLabel(); }
+});
+audioFile.addEventListener('change', updateDropLabel);
+function updateDropLabel() {
+  const f = audioFile.files[0];
+  document.getElementById('dropLabel').textContent = f ? f.name : 'Drop WAV file here or click to browse';
+}
+
+async function createVoice() {
+  const vs = document.getElementById('voiceStatus');
+  const file = audioFile.files[0];
+  const refText = document.getElementById('voiceRefText').value.trim();
+  const name = document.getElementById('voiceName').value.trim();
+  if (!file) { vs.className='save-status err'; vs.textContent='Select a WAV file'; return; }
+  if (!refText) { vs.className='save-status err'; vs.textContent='Enter reference text'; return; }
+  if (!name) { vs.className='save-status err'; vs.textContent='Enter a voice name'; return; }
+
+  vs.className='save-status'; vs.textContent='Encoding voice...';
+
+  try {
+    const form = new FormData();
+    form.append('audio', file);
+    form.append('ref_text', refText);
+    const resp = await fetch('/api/encode-voice', { method:'POST', body: form });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Encode failed');
+
+    await saveCustomVoice(name, { codec_tokens: data.codec_tokens, ref_text: data.ref_text });
+    vs.className='save-status ok'; vs.textContent='✓ Voice "'+name+'" created';
+    audioFile.value=''; updateDropLabel();
+    document.getElementById('voiceRefText').value='';
+    document.getElementById('voiceName').value='';
+    await refreshVoiceDropdown();
+    renderCustomVoicesList();
+  } catch (e) { vs.className='save-status err'; vs.textContent='✗ '+e.message; }
+}
+
+async function renderCustomVoicesList() {
+  const el = document.getElementById('customVoicesList');
+  const voices = await getAllCustomVoices();
+  if (!voices.length) { el.innerHTML='<div style="font-size:12px;color:#666;padding:4px">No custom voices yet</div>'; return; }
+  el.innerHTML = voices.map(v =>
+    `<div class="cv-item"><span>${v.name}</span><span class="cv-del" onclick="delVoice('${v.name.replace(/'/g,"\\'")}')">Delete</span></div>`
+  ).join('');
+}
+async function delVoice(name) {
+  await deleteCustomVoice(name);
+  await refreshVoiceDropdown();
+  renderCustomVoicesList();
+}
+
+// ---- Voice dropdown ----
+async function refreshVoiceDropdown() {
   const sel = document.getElementById('voiceSelect');
+  const cur = sel.value;
+  // Remove all except default
+  while (sel.options.length > 1) sel.remove(1);
+  while (sel.firstElementChild?.tagName === 'OPTGROUP') sel.firstElementChild.remove();
+
+  // Custom voices first
+  const custom = await getAllCustomVoices();
+  if (custom.length) {
+    const grp = document.createElement('optgroup');
+    grp.label = '★ My Voices';
+    custom.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = 'custom:' + v.name;
+      opt.textContent = v.name;
+      grp.appendChild(opt);
+    });
+    sel.appendChild(grp);
+  }
+
+  // HF voices
+  await loadHFVoices(sel);
+
+  // Restore selection
+  if (cur) sel.value = cur;
+}
+
+async function loadHFVoices(sel) {
   try {
     const resp = await fetch(VOICES_HF);
     if (!resp.ok) throw new Error('HF API error');
@@ -200,119 +367,100 @@ async function loadVoices() {
       .map(f => {
         const name = f.path.replace('.json', '');
         const parts = name.split('-');
-        const lang = parts[0] || '';
         const rest = parts.slice(1).join('-');
         const uParts = rest.split('_');
         const game = uParts[0] || '';
         const charEmo = uParts.slice(1).join('_');
         const lastDash = charEmo.lastIndexOf('-');
         let char_ = charEmo, emotion = '';
-        if (lastDash > 0) {
-          char_ = charEmo.substring(0, lastDash);
-          emotion = charEmo.substring(lastDash + 1);
-        }
-        return { file: f.path, name, game, char: char_, emotion, lang };
+        if (lastDash > 0) { char_ = charEmo.substring(0, lastDash); emotion = charEmo.substring(lastDash+1); }
+        return { file: f.path, name, game, char: char_, emotion };
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
 
     const games = {};
-    voices.forEach(v => {
-      if (!games[v.game]) games[v.game] = [];
-      games[v.game].push(v);
-    });
-
-    Object.keys(games).sort((a,b) => a.localeCompare(b, 'zh')).forEach(game => {
-      const group = document.createElement('optgroup');
-      group.label = game;
+    voices.forEach(v => { if (!games[v.game]) games[v.game]=[]; games[v.game].push(v); });
+    Object.keys(games).sort((a,b)=>a.localeCompare(b,'zh')).forEach(game => {
+      const grp = document.createElement('optgroup');
+      grp.label = game;
       games[game].forEach(v => {
         const opt = document.createElement('option');
-        opt.value = v.file;
-        opt.textContent = `${v.char}${v.emotion ? ' (' + v.emotion + ')' : ''}`;
-        group.appendChild(opt);
+        opt.value = 'hf:' + v.file;
+        opt.textContent = `${v.char}${v.emotion ? ' ('+v.emotion+')' : ''}`;
+        grp.appendChild(opt);
       });
-      sel.appendChild(group);
+      sel.appendChild(grp);
     });
-  } catch (e) {
-    console.warn('Failed to load voices from HF:', e);
-  }
+  } catch (e) { console.warn('loadHFVoices:', e); }
 }
 
-async function fetchVoiceData(voiceFile) {
-  if (voiceCache[voiceFile]) return voiceCache[voiceFile];
-  const url = `https://huggingface.co/kautism/qwen3_tts_voices_json/resolve/main/${encodeURIComponent(voiceFile)}`;
+async function fetchVoiceData(voiceKey) {
+  if (voiceKey.startsWith('custom:')) {
+    const name = voiceKey.slice(7);
+    const all = await getAllCustomVoices();
+    const v = all.find(x => x.name === name);
+    if (!v) throw new Error('Custom voice "'+name+'" not found');
+    return v;
+  }
+  const file = voiceKey.startsWith('hf:') ? voiceKey.slice(3) : voiceKey;
+  if (voiceCache[file]) return voiceCache[file];
+  const url = `https://huggingface.co/kautism/qwen3_tts_voices_json/resolve/main/${encodeURIComponent(file)}`;
   const resp = await fetch(url);
-  if (!resp.ok) throw new Error('Failed to download voice: ' + voiceFile);
+  if (!resp.ok) throw new Error('Failed to download voice: ' + file);
   const data = await resp.json();
-  voiceCache[voiceFile] = data;
+  voiceCache[file] = data;
   return data;
 }
 
+// ---- Synthesis ----
 async function synthesize() {
   const text = document.getElementById('textInput').value.trim();
   if (!text) return;
-
   const btn = document.getElementById('sendBtn');
   const status = document.getElementById('status');
   const result = document.getElementById('result');
   const voice = document.getElementById('voiceSelect').value;
   const lang = document.getElementById('langSelect').value;
 
-  btn.disabled = true;
-  status.textContent = 'Synthesizing...';
-  result.innerHTML = '';
-
+  btn.disabled = true; status.textContent = 'Synthesizing...'; result.innerHTML = '';
   const t0 = performance.now();
 
   try {
-    const base = getApiBase();
     const body = { input: text, model: 'qwen3-tts' };
-
     if (voice && voice !== 'default') {
       status.textContent = 'Loading voice profile...';
       const vd = await fetchVoiceData(voice);
-      // Filter out @filename ref_text (broken file references)
-      const refText = (vd.ref_text && !vd.ref_text.startsWith('@')) ? vd.ref_text : null;
-      body.voice_data = {
-        codec_tokens: vd.codec_tokens,
-        ref_text: refText,
-      };
+      body.voice_data = { codec_tokens: vd.codec_tokens, ref_text: vd.ref_text || null };
     }
     if (lang) body.language = lang;
 
     status.textContent = 'Synthesizing...';
-    const resp = await fetch(`${base}/v1/audio/speech`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    const resp = await fetch('/v1/audio/speech', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
     });
-
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: { message: resp.statusText } }));
+      const err = await resp.json().catch(()=>({error:{message:resp.statusText}}));
       throw new Error(err.error?.message || 'Synthesis failed');
     }
 
+    const audioDur = parseFloat(resp.headers.get('x-audio-duration') || '0');
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
-    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    const wallSec = (performance.now() - t0) / 1000;
+    const rtf = audioDur > 0 ? (wallSec / audioDur).toFixed(2) : '?';
 
     result.innerHTML = `<audio controls autoplay src="${url}"></audio>`;
-    status.textContent = `Done in ${elapsed}s`;
-  } catch (e) {
-    status.textContent = '❌ ' + e.message;
-    result.innerHTML = '';
-  } finally {
-    btn.disabled = false;
-  }
+    status.textContent = `Done in ${wallSec.toFixed(1)}s (RTF: ${rtf}×)`;
+  } catch (e) { status.textContent = '❌ ' + e.message; result.innerHTML = ''; }
+  finally { btn.disabled = false; }
 }
 
 document.getElementById('textInput').addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault();
-    synthesize();
-  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); synthesize(); }
 });
 
-loadVoices();
+// Init
+refreshVoiceDropdown();
 </script>
 </body>
 </html>

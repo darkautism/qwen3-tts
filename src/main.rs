@@ -455,16 +455,5 @@ async fn cmd_encode_voice(
 
 /// Resolve speech tokenizer model.safetensors path, downloading from HF if needed.
 fn resolve_speech_tokenizer_path(hf_model: &str) -> Result<String> {
-    // Try local path first
-    let local = format!("{}/speech_tokenizer/model.safetensors", hf_model);
-    if std::path::Path::new(&local).exists() {
-        return Ok(local);
-    }
-
-    // Download from HuggingFace
-    info!("Downloading speech tokenizer from {}", hf_model);
-    let api = hf_hub::api::sync::Api::new()?;
-    let repo = api.model(hf_model.to_string());
-    let path = repo.get("speech_tokenizer/model.safetensors")?;
-    Ok(path.to_string_lossy().to_string())
+    qwen3_tts_rs::speech_tokenizer::resolve_model_path(hf_model)
 }

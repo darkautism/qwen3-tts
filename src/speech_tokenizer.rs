@@ -739,3 +739,16 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         .map(|v| v as f32)
         .collect()
 }
+
+/// Resolve speech tokenizer model.safetensors path, downloading from HF if needed.
+pub fn resolve_model_path(hf_model: &str) -> anyhow::Result<String> {
+    let local = format!("{}/speech_tokenizer/model.safetensors", hf_model);
+    if std::path::Path::new(&local).exists() {
+        return Ok(local);
+    }
+    tracing::info!("Downloading speech tokenizer from {}", hf_model);
+    let api = hf_hub::api::sync::Api::new()?;
+    let repo = api.model(hf_model.to_string());
+    let path = repo.get("speech_tokenizer/model.safetensors")?;
+    Ok(path.to_string_lossy().to_string())
+}
