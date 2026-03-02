@@ -549,7 +549,6 @@ async fn send_response(stream: &mut tokio::net::TcpStream, resp: &Response) -> R
         .write_all(&(bytes.len() as u32).to_be_bytes())
         .await?;
     stream.write_all(&bytes).await?;
-    stream.flush().await?;
     Ok(())
 }
 

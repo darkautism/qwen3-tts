@@ -34,7 +34,6 @@ impl WorkerClient {
         let len = payload.len() as u32;
         self.stream.write_all(&len.to_be_bytes()).await?;
         self.stream.write_all(&payload).await?;
-        self.stream.flush().await?;
         Ok(())
     }
 

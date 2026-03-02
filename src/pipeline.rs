@@ -607,7 +607,7 @@ impl Pipeline {
             if (i + 1) % 10 == 0 {
                 let elapsed = start.elapsed().as_secs_f32();
                 let rate = (i + 1) as f32 / elapsed;
-                info!(
+                debug!(
                     "[{}/{}] rate={:.1} tok/s, talker={}ms, cp={}ms",
                     i + 1,
                     params.max_tokens,
