@@ -275,7 +275,6 @@ qwen3-tts "你好世界"
 | `qwen3-tts speak "text" -o file.wav` | Specify output file |
 | `qwen3-tts speak "text" --lang english` | Specify language |
 | `qwen3-tts speak "text" --voice voice.json` | Voice cloning |
-| `qwen3-tts speak "text" --aggressive` | Speculative pipeline (⚠️ experimental) |
 | `qwen3-tts encode-voice -a ref.wav -r "text" -o voice.json` | Create voice profile (native ARM64) |
 | `qwen3-tts serve --port 8080` | Start OpenAI-compatible API server |
 | `qwen3-tts mcp` | Start MCP server (stdio) |
@@ -495,33 +494,7 @@ RUSTFLAGS='-C target-feature=+dotprod' cargo build --release
 
 This is critical on Cortex-A76 and newer cores. Without it, quantized inference uses a slower vmull+vpaddl path.
 
-### 5. Speculative pipelining (`--aggressive`) ⚠️ Experimental
-
-```bash
-# Overlaps talker_step and code_predict — uses stale feedback
-qwen3-tts speak "your text" --aggressive
-```
-
-Or set in config:
-```toml
-[defaults]
-aggressive = true
-```
-
-This overlaps the talker LLM step with the code predictor by using one-step-delayed feedback embeddings.
-Token generation rate improves significantly (~60% faster), but **audio quality degrades severely** due to stale feedback accumulation.
-
-| Test | Normal tok/s | Aggressive tok/s | Normal RTF | Aggressive RTF |
-|------|-------------|-----------------|-----------|---------------|
-| SHORT | 4.5 | 4.6 | 7.80× | 7.00× |
-| MEDIUM | 5.4 | **8.1** | 3.52× | **2.67×** |
-| LONG | 5.2 | **8.5** | 2.76× | **2.32×** |
-
-> ⚠️ **Warning:** Aggressive mode produces garbled/unintelligible audio for most inputs.
-> The feedback embedding is critical for speech coherence, and one-step-stale data causes rapid error accumulation.
-> This mode exists for benchmarking and experimentation only — do not use for production synthesis.
-
-| What | MEDIUM RTF | Speedup |
+### Summary: Cumulative Effect| What | MEDIUM RTF | Speedup |
 |------|-----------|---------|
 | Default (no optimization) | 4.96× | baseline |
 | + `--big-cores` + Q4 + SDOT | 2.87× | **42% faster** |

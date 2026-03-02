@@ -94,7 +94,6 @@ async fn create_speech(
         temperature: state.config.defaults.temperature,
         cp_temperature: state.config.defaults.cp_temperature,
         repetition_penalty: state.config.defaults.repetition_penalty,
-        aggressive: state.config.defaults.aggressive,
     };
 
     let mut pipeline = state.pipeline.lock().await;

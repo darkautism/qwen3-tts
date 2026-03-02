@@ -31,8 +31,7 @@ async fn main() -> Result<()> {
             lang,
             voice,
             max_tokens,
-            aggressive,
-        }) => cmd_speak(text, output, lang, voice, max_tokens, None, aggressive).await,
+        }) => cmd_speak(text, output, lang, voice, max_tokens, None).await,
 
         Some(Commands::Serve { port, mcp }) => cmd_serve(port, mcp).await,
 
@@ -77,7 +76,7 @@ async fn main() -> Result<()> {
             } else {
                 // Shorthand: qwen3-tts "hello world"
                 let text = cli.text.join(" ");
-                cmd_speak(text, "output.wav".into(), None, None, None, None, false).await
+                cmd_speak(text, "output.wav".into(), None, None, None, None).await
             }
         }
     }
@@ -90,12 +89,10 @@ async fn cmd_speak(
     voice: Option<String>,
     max_tokens: Option<usize>,
     config_path: Option<&str>,
-    aggressive: bool,
 ) -> Result<()> {
     let config = Config::load(config_path)?;
     let language = lang.unwrap_or_else(|| config.defaults.language.clone());
     let max_tok = max_tokens.unwrap_or(config.defaults.max_tokens);
-    let aggressive = aggressive || config.defaults.aggressive;
 
     // Resolve voice name to file path
     let voice = match voice {
@@ -119,7 +116,6 @@ async fn cmd_speak(
             temperature: config.defaults.temperature,
             cp_temperature: config.defaults.cp_temperature,
             repetition_penalty: config.defaults.repetition_penalty,
-            aggressive,
         })
         .await?;
 
