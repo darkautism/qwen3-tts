@@ -241,6 +241,13 @@ impl Pipeline {
                 _ => anyhow::bail!("Unexpected response from tokenize_and_embed"),
             };
 
+            // Voice clone voices may speak slower → need more tokens per character
+            let expected_tokens = if has_voice {
+                (expected_tokens as f32 * 1.5) as usize
+            } else {
+                expected_tokens
+            };
+
             // Phase 2: TalkerPrefill
             self.talker
                 .call(&Request::TalkerPrefill {
@@ -452,6 +459,14 @@ impl Pipeline {
                 expected_output_tokens,
             } => (prefix_embeddings, n_prefix, expected_output_tokens),
             _ => anyhow::bail!("Unexpected response from tokenize_and_embed"),
+        };
+
+        // Voice clone voices may speak slower → need more tokens per character
+        let has_voice = params.voice_data.is_some() || params.voice.is_some();
+        let expected_tokens = if has_voice {
+            (expected_tokens as f32 * 1.5) as usize
+        } else {
+            expected_tokens
         };
 
         info!(
