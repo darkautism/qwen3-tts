@@ -1,16 +1,14 @@
 <div align="center">
 
+![banner](doc/images/banner.png)
+
 # qwen3-tts
 
-Distributed Qwen3-TTS speech synthesis system — a Rust implementation designed for low-cost SBC clusters.
+Distributed Qwen3-TTS — Rust-based distributed text-to-speech optimized for low-cost SBC clusters.
 
-Single binary serves as CLI, OpenAI-compatible API server, MCP server, and inference worker.
-Models auto-download from HuggingFace Hub.
-**Zero Python dependencies** — all inference uses Candle (Rust ML framework), voice encoding is native.
-Single statically-compiled binary; Talker/Predictor require no external `.so` libraries.
+We have a Web UI now! Start the server and open the built-in web interface in your browser.
 
-[![][license-shield]][license-shield-link]
-[![][last-commit-shield]][last-commit-shield-link]
+Single binary provides CLI, an OpenAI-compatible HTTP API (with web UI), an MCP stdio bridge, and inference workers. Models auto-download from HuggingFace Hub.
 
 [中文文檔](README-zh.md)
 
