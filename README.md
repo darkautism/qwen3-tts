@@ -10,6 +10,11 @@ We have a Web UI now! Start the server and open the built-in web interface in yo
 
 Single binary provides CLI, an OpenAI-compatible HTTP API (with web UI), an MCP stdio bridge, and inference workers. Models auto-download from HuggingFace Hub.
 
+
+[![][license-shield]][license-shield-link]
+[![][last-commit-shield]][last-commit-shield-link]
+
+
 [中文文檔](README-zh.md)
 
 We have WebUI Now!
