@@ -63,6 +63,14 @@ pub enum Commands {
         /// HuggingFace Hub repo (auto-download if models missing)
         #[arg(long, default_value = "kautism/qwen3-tts-rk3588")]
         repo: String,
+
+        /// Pin to specific CPU cores (e.g., "4,5" or "4-7")
+        #[arg(long)]
+        cores: Option<String>,
+
+        /// Auto-detect and pin to big (A76) CPU cores (RK3588)
+        #[arg(long)]
+        big_cores: bool,
     },
 
     /// Start MCP server (stdio transport)

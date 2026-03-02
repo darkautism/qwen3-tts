@@ -116,18 +116,19 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ### 啟動 Worker (模型自動從 HF Hub 下載)
 
 ```bash
-# IP1 - Talker Worker
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+# IP1 - Talker Worker（在 big.LITTLE SoC 如 RK3588 上使用 --big-cores）
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # IP2 - Predictor Worker
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
 
 # IP2 - Vocoder Worker (可以和 Predictor 同一台)
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 ```
 
 > 模型預設下載到 `~/.local/share/qwen3-tts/models/{role}/`
 > 自定義 HF repo: `--repo your-name/your-repo`
+> 指定 CPU 核心: `--cores 4-7` 或 `--cores 4,5,6,7`
 
 ### 合成語音
 
@@ -183,13 +184,13 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip 127.0.0.1 --vocoder-ip 127.0
 
 ```bash
 # 終端 1: Talker
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # 終端 2: Predictor
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
 
 # 終端 3: Vocoder
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 
 # 終端 4: 合成
 qwen3-tts "你好世界"
@@ -203,11 +204,11 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip <IP2> --vocoder-ip <IP2>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 
 # IP1:
 qwen3-tts "你好世界"
@@ -221,13 +222,13 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP3>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
 
 # IP3:
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 
 # 任意機器 (含 IP1):
 qwen3-tts "你好世界"
@@ -280,6 +281,8 @@ qwen3-tts "你好世界"
 | `qwen3-tts worker -r talker` | 啟動 Talker Worker |
 | `qwen3-tts worker -r predictor` | 啟動 Predictor Worker |
 | `qwen3-tts worker -r vocoder` | 啟動 Vocoder Worker |
+| `qwen3-tts worker -r talker --big-cores` | Worker 固定在大核心上 |
+| `qwen3-tts worker -r talker --cores 4-7` | Worker 固定在指定核心上 |
 | `qwen3-tts init --predictor-ip <IP>` | 產生配置檔 |
 
 ## OpenAI 相容 API
@@ -419,7 +422,7 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 
 ## 效能
 
-於 2× RK3588 (4×A76+4×A55) 千兆網路環境測試：
+於 2× RK3588 (4×A76+4×A55) 千兆網路環境測試，使用 `--big-cores` 啟動 Worker：
 
 | 指標 | 數值 |
 |------|------|
@@ -434,6 +437,9 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 | 外部依賴 | 僅需 `libonnxruntime.so` |
 
 > RTF = 生成時間 / 音訊時間。越低越好，RTF < 1 為即時。
+>
+> **重要：** 在 big.LITTLE SoC（如 RK3588）上，務必使用 `--big-cores` 啟動 worker。
+> 否則 rayon 會將矩陣運算分配到慢速 A55 核心，predictor 延遲從 108ms 退化到 190ms。
 
 ### 優化歷程
 
@@ -442,6 +448,7 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 | 基準 (Candle Q8_0, 完整 1.3GB GGUF) | 185 | 4.96× | — |
 | + 伺服器端 past_tokens + mem::take() | 185 | 4.79× | −3% |
 | + **精簡版 code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
+| + **CPU 親和性 (`--big-cores`)** | **108** | **3.08×** | **−1%** |
 
 關鍵發現：完整 1.3GB GGUF 包含 1075MB 的 talker 權重，但 predictor 從未使用。
 精簡至 206MB 的 code-predictor 專用 GGUF 消除了 L2 快取污染 → **預測速度提升 41%**。

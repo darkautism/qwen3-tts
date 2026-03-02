@@ -40,7 +40,9 @@ async fn main() -> Result<()> {
             role,
             models,
             repo,
-        }) => cmd_worker(bind, role, models, repo).await,
+            cores,
+            big_cores,
+        }) => cmd_worker(bind, role, models, repo, cores, big_cores).await,
 
         Some(Commands::Mcp) => cmd_mcp().await,
 
@@ -164,7 +166,26 @@ async fn cmd_worker(
     role: WorkerRole,
     models: Option<String>,
     repo: String,
+    cores: Option<String>,
+    big_cores: bool,
 ) -> Result<()> {
+    // Pin CPU affinity before loading models (affects all threads)
+    if let Some(ref core_spec) = cores {
+        set_cpu_affinity(core_spec)?;
+    } else if big_cores {
+        let big = detect_big_cores();
+        if !big.is_empty() {
+            let spec = big
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            set_cpu_affinity(&spec)?;
+        } else {
+            info!("No big cores detected, using all cores");
+        }
+    }
+
     let role_str = match role {
         WorkerRole::Talker => "talker",
         WorkerRole::Predictor => "predictor",
@@ -183,6 +204,79 @@ async fn cmd_worker(
     let role_dir = qwen3_tts_rs::download::ensure_models(role_str, &models_dir, Some(&repo))?;
 
     qwen3_tts_rs::worker::run_worker(&bind, role_str, role_dir.to_str().unwrap()).await
+}
+
+/// Parse core spec ("4,5" or "4-7" or "4,5,6-7") and set CPU affinity via sched_setaffinity
+fn set_cpu_affinity(spec: &str) -> Result<()> {
+    let mut cores = Vec::new();
+    for part in spec.split(',') {
+        let part = part.trim();
+        if let Some((start, end)) = part.split_once('-') {
+            let s: usize = start.trim().parse()?;
+            let e: usize = end.trim().parse()?;
+            for c in s..=e {
+                cores.push(c);
+            }
+        } else {
+            cores.push(part.parse()?);
+        }
+    }
+    if cores.is_empty() {
+        anyhow::bail!("No cores specified");
+    }
+
+    // Build CPU_SET bitmask
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for &c in &cores {
+            libc::CPU_SET(c, &mut set);
+        }
+
+        // Set affinity for ALL threads in this process (tokio spawns threads before main)
+        let task_dir = std::path::Path::new("/proc/self/task");
+        if task_dir.exists() {
+            for entry in std::fs::read_dir(task_dir)? {
+                if let Ok(entry) = entry {
+                    if let Ok(tid) = entry.file_name().to_string_lossy().parse::<i32>() {
+                        libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
+                    }
+                }
+            }
+        } else {
+            // Fallback: set for current thread only
+            let ret = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+            if ret != 0 {
+                anyhow::bail!(
+                    "sched_setaffinity failed: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+
+    // Limit rayon thread pool to match pinned core count
+    std::env::set_var("RAYON_NUM_THREADS", cores.len().to_string());
+
+    info!("CPU affinity set to cores: {:?}", cores);
+    Ok(())
+}
+
+/// Detect big (performance) CPU cores by reading /sys/devices/system/cpu/cpu*/cpu_capacity
+/// On RK3588: A76 cores report capacity=1024, A55 cores report capacity=446
+fn detect_big_cores() -> Vec<usize> {
+    let mut big = Vec::new();
+    let cpu_dir = std::path::Path::new("/sys/devices/system/cpu");
+    for i in 0..16 {
+        let cap_path = cpu_dir.join(format!("cpu{}", i)).join("cpu_capacity");
+        if let Ok(s) = std::fs::read_to_string(&cap_path) {
+            if let Ok(cap) = s.trim().parse::<u32>() {
+                if cap >= 800 {
+                    big.push(i);
+                }
+            }
+        }
+    }
+    big
 }
 
 async fn cmd_mcp() -> Result<()> {

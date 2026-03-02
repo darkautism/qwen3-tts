@@ -118,18 +118,19 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ### Start Workers (models auto-download from HF Hub)
 
 ```bash
-# IP1 - Talker Worker
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+# IP1 - Talker Worker (use --big-cores on big.LITTLE SoCs like RK3588)
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # IP2 - Predictor Worker
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
 
 # IP2 - Vocoder Worker (can share machine with Predictor)
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 ```
 
 > Models download to `~/.local/share/qwen3-tts/models/{role}/` by default.
 > Custom HF repo: `--repo your-name/your-repo`
+> For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
 
 ### Synthesize Speech
 
@@ -185,19 +186,17 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip 127.0.0.1 --vocoder-ip 127.0
 
 ```bash
 # Terminal 1: Talker
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # Terminal 2: Predictor
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
 
 # Terminal 3: Vocoder
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 
 # Terminal 4: Synthesize
 qwen3-tts "你好世界"
 ```
-
-### Two Machines (IP1 = Talker, IP2 = Predictor + Vocoder)
 
 ```bash
 qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip <IP2> --vocoder-ip <IP2>
@@ -205,11 +204,11 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip <IP2> --vocoder-ip <IP2>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 
 # IP1:
 qwen3-tts "你好世界"
@@ -223,13 +222,13 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP3>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090
+qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
 
 # IP3:
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
 
 # Any machine (including IP1):
 qwen3-tts "你好世界"
@@ -282,6 +281,8 @@ qwen3-tts "你好世界"
 | `qwen3-tts worker -r talker` | Start Talker Worker |
 | `qwen3-tts worker -r predictor` | Start Predictor Worker |
 | `qwen3-tts worker -r vocoder` | Start Vocoder Worker |
+| `qwen3-tts worker -r talker --big-cores` | Worker pinned to big CPU cores |
+| `qwen3-tts worker -r talker --cores 4-7` | Worker pinned to specific cores |
 | `qwen3-tts init --predictor-ip <IP>` | Generate config file |
 
 ## OpenAI-Compatible API
@@ -421,7 +422,7 @@ Chinese · English · Deutsch · Русский · Français · 日本語 · 한
 
 ## Performance
 
-Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN:
+Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN, workers started with `--big-cores`:
 
 | Metric | Value |
 |--------|-------|
@@ -436,6 +437,9 @@ Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN:
 | External dependencies | `libonnxruntime.so` only |
 
 > RTF = generation time / audio duration. Lower is better; RTF < 1 is real-time.
+>
+> **Important:** On big.LITTLE SoCs (e.g., RK3588), always start workers with `--big-cores` to avoid slow small cores.
+> Without it, rayon distributes matmul to slow A55 cores → predictor degrades from 108ms to 190ms.
 
 ### Optimization Journey
 
@@ -444,6 +448,7 @@ Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN:
 | Baseline (Candle Q8_0, full 1.3GB GGUF) | 185 | 4.96× | — |
 | + Server-side past_tokens + mem::take() | 185 | 4.79× | −3% |
 | + **Stripped code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
+| + **CPU affinity (`--big-cores`)** | **108** | **3.08×** | **−1%** |
 
 Key insight: the full 1.3GB GGUF contains talker weights (1075MB) never used by the predictor.
 Stripping to a 206MB code-predictor-only GGUF eliminates L2 cache pollution → **41% faster prediction**.

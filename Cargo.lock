@@ -2045,6 +2045,7 @@ dependencies = [
  "dirs",
  "hf-hub",
  "hound",
+ "libc",
  "libloading 0.8.9",
  "ndarray",
  "ndarray-npy",

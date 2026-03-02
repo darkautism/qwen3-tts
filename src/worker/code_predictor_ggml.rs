@@ -51,8 +51,8 @@ impl CodePredictorGgml {
         let device = Device::Cpu;
         let mut file = std::fs::File::open(&gguf_path)
             .with_context(|| format!("Open {}", gguf_path.display()))?;
-        let ct = gguf_file::Content::read(&mut file)
-            .map_err(|e| anyhow::anyhow!("Read GGUF: {}", e))?;
+        let ct =
+            gguf_file::Content::read(&mut file).map_err(|e| anyhow::anyhow!("Read GGUF: {}", e))?;
 
         let mut codec_embeddings = Vec::with_capacity(NUM_GROUPS);
         for i in 0..NUM_GROUPS {

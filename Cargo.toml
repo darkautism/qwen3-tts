@@ -81,6 +81,9 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 # Byte casting (for npy parsing in ggml-backend)
 bytemuck = { version = "1", optional = true, features = ["derive"] }
 
+# CPU affinity (sched_setaffinity)
+libc = "0.2"
+
 [features]
 default = []
 rknn-vocoder = ["dep:libloading"]  # Use RKNN INT8 NPU vocoder instead of ONNX FP32 (faster, has quantization noise)
