@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
 
-use crate::protocol::{Request, Response, HIDDEN_SIZE};
+use crate::protocol::{Request, Response, ResponseData, HIDDEN_SIZE};
 
 pub struct Worker {
     state: WorkerState,
@@ -210,7 +210,7 @@ impl Worker {
                 error!("Request error: {:#}", e);
                 Response {
                     status: "error".into(),
-                    data: serde_json::Value::Null,
+                    data: ResponseData::Init,
                     error: Some(format!("{:#}", e)),
                 }
             }
@@ -219,8 +219,8 @@ impl Worker {
 
     fn dispatch(&mut self, req: Request) -> Result<Response> {
         match req {
-            Request::Ping => ok(serde_json::json!({"pong": true})),
-            Request::Init { .. } => ok(serde_json::json!({"ready": true})),
+            Request::Ping => ok(ResponseData::Ping),
+            Request::Init { .. } => ok(ResponseData::Init),
             Request::TokenizeAndEmbed {
                 text,
                 language,
@@ -308,11 +308,11 @@ impl Worker {
         let prefix_b64 = encode_f32_slice(prefix.as_slice().unwrap());
         let expected = estimate_tokens(text, language);
 
-        ok(serde_json::json!({
-            "prefix_embeddings": prefix_b64,
-            "n_prefix": n_prefix,
-            "expected_output_tokens": expected,
-        }))
+        ok(ResponseData::TokenizeAndEmbed {
+            prefix_embeddings: prefix_b64,
+            n_prefix,
+            expected_output_tokens: expected,
+        })
     }
 
     fn handle_talker_prefill(&mut self, prefix_b64: &str) -> Result<Response> {
@@ -324,7 +324,9 @@ impl Worker {
         let hidden = ts.talker.get_hidden(&prefix_flat, n_tokens, false)?;
         ts.last_hidden = Some(hidden);
 
-        ok(serde_json::json!({"prefilled": n_tokens}))
+        ok(ResponseData::TalkerPrefill {
+            prefilled: n_tokens,
+        })
     }
 
     fn handle_talker_step(
@@ -363,11 +365,11 @@ impl Worker {
         // Save hidden for potential reuse
         ts.last_hidden = Some(hidden);
 
-        ok(serde_json::json!({
-            "hidden_state": hidden_b64,
-            "code_0": code_0,
-            "is_eos": is_eos,
-        }))
+        ok(ResponseData::TalkerStep {
+            hidden_state: hidden_b64,
+            code_0,
+            is_eos,
+        })
     }
 
     fn handle_load_voice(
@@ -383,7 +385,7 @@ impl Worker {
         info!("Loaded voice: {} tokens", ref_tokens.nrows());
         ts.ref_codec_tokens = Some(ref_tokens);
         ts.ref_text = ref_text;
-        ok(serde_json::json!({"loaded": true}))
+        ok(ResponseData::LoadVoice)
     }
 
     // ── Predictor handlers ───────────────────────────────────────────
@@ -416,10 +418,10 @@ impl Worker {
         let codes_json: Vec<i64> = predicted.iter().map(|&c| c as i64).collect();
         let feedback_b64 = encode_f32_slice(ps.feedback_buf.as_slice().unwrap());
 
-        ok(serde_json::json!({
-            "codes": codes_json,
-            "feedback_embedding": feedback_b64,
-        }))
+        ok(ResponseData::CodePredict {
+            codes: codes_json,
+            feedback_embedding: feedback_b64,
+        })
     }
 
     fn handle_vocode(&mut self, codes_b64: &str, n_tokens: usize) -> Result<Response> {
@@ -444,10 +446,10 @@ impl Worker {
         let audio_bytes: Vec<u8> = audio_i16.iter().flat_map(|s| s.to_le_bytes()).collect();
         let audio_b64 = B64.encode(&audio_bytes);
 
-        ok(serde_json::json!({
-            "audio": audio_b64,
-            "n_samples": audio_i16.len(),
-        }))
+        ok(ResponseData::Vocode {
+            audio: audio_b64,
+            n_samples: audio_i16.len(),
+        })
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -508,7 +510,7 @@ pub async fn run_worker(bind: &str, role: &str, models_dir: &str) -> Result<()> 
                     error!("Deserialize error: {}", e);
                     let resp = Response {
                         status: "error".into(),
-                        data: serde_json::Value::Null,
+                        data: ResponseData::Init,
                         error: Some(format!("Deserialize: {}", e)),
                     };
                     let _ = send_response(&mut stream, &resp).await;
@@ -553,7 +555,7 @@ async fn send_response(stream: &mut tokio::net::TcpStream, resp: &Response) -> R
 
 // ── Utility functions ────────────────────────────────────────────────
 
-fn ok(data: serde_json::Value) -> Result<Response> {
+fn ok(data: ResponseData) -> Result<Response> {
     Ok(Response {
         status: "ok".into(),
         data,

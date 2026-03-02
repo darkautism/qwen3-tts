@@ -65,12 +65,52 @@ pub enum Request {
     Ping,
 }
 
+/// Typed response data — avoids serde_json::Value overhead in hot path
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseData {
+    /// TokenizeAndEmbed response
+    #[serde(rename = "tok_embed")]
+    TokenizeAndEmbed {
+        prefix_embeddings: String,
+        n_prefix: usize,
+        expected_output_tokens: usize,
+    },
+    /// TalkerPrefill response
+    #[serde(rename = "prefill")]
+    TalkerPrefill { prefilled: usize },
+    /// TalkerStep response (hot path)
+    #[serde(rename = "talker_step")]
+    TalkerStep {
+        hidden_state: String,
+        code_0: i32,
+        is_eos: bool,
+    },
+    /// CodePredict response (hot path)
+    #[serde(rename = "code_predict")]
+    CodePredict {
+        codes: Vec<i64>,
+        feedback_embedding: String,
+    },
+    /// Vocode response
+    #[serde(rename = "vocode")]
+    Vocode { audio: String, n_samples: usize },
+    /// LoadVoice response
+    #[serde(rename = "load_voice")]
+    LoadVoice,
+    /// Ping response
+    #[serde(rename = "ping")]
+    Ping,
+    /// Generic ack
+    #[serde(rename = "init")]
+    Init,
+}
+
 /// Worker responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
     pub status: String,
-    #[serde(default)]
-    pub data: serde_json::Value,
+    pub data: ResponseData,
     #[serde(default)]
     pub error: Option<String>,
 }

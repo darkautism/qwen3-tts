@@ -105,13 +105,14 @@ impl Pipeline {
                 .await?
         };
 
-        let prefix_b64 = ref_tokens.data["prefix_embeddings"]
-            .as_str()
-            .context("Missing prefix_embeddings in response")?;
-        let n_prefix = ref_tokens.data["n_prefix"].as_u64().unwrap_or(0) as usize;
-        let expected_tokens = ref_tokens.data["expected_output_tokens"]
-            .as_u64()
-            .unwrap_or(params.max_tokens as u64) as usize;
+        let (prefix_b64, n_prefix, expected_tokens) = match ref_tokens.data {
+            ResponseData::TokenizeAndEmbed {
+                prefix_embeddings,
+                n_prefix,
+                expected_output_tokens,
+            } => (prefix_embeddings, n_prefix, expected_output_tokens),
+            _ => anyhow::bail!("Unexpected response from tokenize_and_embed"),
+        };
 
         info!(
             "Prefix built: {} tokens, expecting ~{} output tokens",
@@ -122,7 +123,7 @@ impl Pipeline {
         info!("Prefilling talker...");
         self.talker
             .call(&Request::TalkerPrefill {
-                prefix_embeddings: prefix_b64.to_string(),
+                prefix_embeddings: prefix_b64,
             })
             .await?;
 
@@ -178,10 +179,14 @@ impl Pipeline {
 
             first_step = false;
 
-            let code_0 = talker_resp.data["code_0"]
-                .as_i64()
-                .context("Missing code_0")? as i32;
-            let is_eos = talker_resp.data["is_eos"].as_bool().unwrap_or(false);
+            let (hidden_b64, code_0, is_eos) = match talker_resp.data {
+                ResponseData::TalkerStep {
+                    hidden_state,
+                    code_0,
+                    is_eos,
+                } => (hidden_state, code_0, is_eos),
+                _ => anyhow::bail!("Unexpected response from talker_step"),
+            };
 
             if i < 5 || (i + 1) % 20 == 0 {
                 debug!("Step {}: code_0={} talker={}ms", i, code_0, talker_ms);
@@ -195,11 +200,6 @@ impl Pipeline {
                 break;
             }
 
-            let hidden_b64 = talker_resp.data["hidden_state"]
-                .as_str()
-                .context("Missing hidden_state")?
-                .to_string();
-
             // CodePredictor → codes[1-15] + feedback embedding
             let t1 = std::time::Instant::now();
             let cp_resp = self
@@ -212,17 +212,15 @@ impl Pipeline {
                 .await?;
             let cp_ms = t1.elapsed().as_millis();
 
-            let codes_1_15: Vec<i64> = cp_resp.data["codes"]
-                .as_array()
-                .context("Missing codes array")?
-                .iter()
-                .map(|v| v.as_i64().unwrap_or(0))
-                .collect();
+            let (codes_1_15, fb) = match cp_resp.data {
+                ResponseData::CodePredict {
+                    codes,
+                    feedback_embedding,
+                } => (codes, feedback_embedding),
+                _ => anyhow::bail!("Unexpected response from code_predict"),
+            };
 
-            feedback_b64 = cp_resp.data["feedback_embedding"]
-                .as_str()
-                .context("Missing feedback_embedding")?
-                .to_string();
+            feedback_b64 = fb;
 
             // Collect full 16-group code token
             token_codes.clear();
@@ -290,9 +288,10 @@ impl Pipeline {
         // Collect responses from batches sent during generation
         for batch_idx in 0..vocode_batches_sent {
             let voc_resp = self.vocoder.read_response().await?;
-            let audio_b64 = voc_resp.data["audio"]
-                .as_str()
-                .context("Missing audio data in streamed batch")?;
+            let audio_b64 = match &voc_resp.data {
+                ResponseData::Vocode { audio, .. } => audio,
+                _ => anyhow::bail!("Unexpected response from vocoder batch"),
+            };
             let batch_audio = decode_i16(audio_b64)?;
             debug!(
                 "Vocoder batch {} received: {} samples",
@@ -316,9 +315,10 @@ impl Pipeline {
                     n_tokens: remaining_n,
                 })
                 .await?;
-            let audio_b64 = voc_resp.data["audio"]
-                .as_str()
-                .context("Missing audio data")?;
+            let audio_b64 = match &voc_resp.data {
+                ResponseData::Vocode { audio, .. } => audio,
+                _ => anyhow::bail!("Unexpected response from vocoder"),
+            };
             let remaining_audio = decode_i16(audio_b64)?;
             all_audio_i16.extend_from_slice(&remaining_audio);
         }
