@@ -39,7 +39,7 @@
 | **Predictor** | CodePredictor (Candle GGUF Q8_0) + 回饋嵌入 | CPU | 9091 |
 | **Vocoder** | Vocoder (ONNX FP32 CPU) | CPU | 9092 |
 
-將工作分散在低成本 SBC 或任何 Linux 機器上。Token 生成：Candle ~3.6 tok/s (預設) / GGML ~4.0 tok/s (`--features ggml-backend`)。
+將工作分散在低成本 SBC 或任何 Linux 機器上。Token 生成：~5.5 tok/s（使用精簡版 code-predictor GGUF）。
 
 ## 系統需求
 
@@ -85,14 +85,8 @@ sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/r
 # 標準編譯 (Candle 推理 + ONNX FP32 vocoder — 純 Rust，無額外 .so)
 cargo build --release
 
-# 使用 C++ GGML 後端 (ARM NEON SDOT 加速，~2x 快於 Candle，需 llama_wrapper.so)
-cargo build --release --features ggml-backend
-
 # 使用 RKNN INT8 vocoder (僅 Rockchip NPU — 較快但有量化雜音)
 cargo build --release --features rknn-vocoder
-
-# 兩者都啟用
-cargo build --release --features ggml-backend,rknn-vocoder
 # 產出: target/release/qwen3-tts (~15-20 MB)
 ```
 
@@ -102,13 +96,12 @@ cargo build --release --features ggml-backend,rknn-vocoder
 
 | Feature | 說明 | 額外依賴 | 效能 |
 |---------|------|----------|------|
-| (預設) | Candle 推理 + ONNX vocoder | `libonnxruntime.so` | ~3.6 tok/s |
-| `ggml-backend` | C++ GGML/llama.cpp 推理 | `llama_wrapper.so` + `libllama.so` + `libggml*.so` | **~4.0 tok/s** |
+| (預設) | Candle 推理 + ONNX vocoder | `libonnxruntime.so` | **~5.5 tok/s** |
+| `ggml-predictor` | C++ GGML code predictor | 靜態 `.a` 庫 | 比 Candle 慢 |
 | `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ 有雜音 |
 
 預設使用 Candle (純 Rust) 推理，不需額外安裝 C/C++ 函式庫。
-啟用 `ggml-backend` 可利用 ARM NEON SDOT 硬體指令額外加速約 10-15%。
-Candle 後端已包含 SDOT 內聯組語優化 + 預分配記憶體池，差距已大幅縮小。
+Candle 後端包含 SDOT 內聯組語優化，搭配精簡版 GGUF 模型可大幅提升效能。
 RKNN vocoder 以音質換取速度 — INT8 量化會引入可聽見的雜音。
 
 ## 快速開始
@@ -426,21 +419,32 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 
 ## 效能
 
-| 指標 | Candle (預設) | GGML (`--features ggml-backend`) |
-|------|--------------|----------------------------------|
-| Token 生成速率 | ~3.6 tok/s | **~4.0 tok/s** |
-| Talker 延遲 | ~60ms/step | ~33ms/step |
-| Predictor 延遲 | ~185ms/step | ~185ms/step |
-| Vocoder (ONNX FP32) | ~4.5s (CPU, 無雜音) | ~4.5s |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ 有雜音) | ~2.7s |
-| RTF — ONNX (預設) | ~4.8x | ~3.8x |
-| RTF — RKNN | ~4.2x | ~3.5x |
-| 語音編碼速度 | ~2s/4s audio | ~2s/4s audio |
-| 網路開銷 | <5ms/step (LAN) | <5ms/step (LAN) |
-| 外部依賴 | `libonnxruntime.so` | `.so` 多個 (見上表) |
+於 2× RK3588 (4×A76+4×A55) 千兆網路環境測試：
 
-> RTF = 生成時間 / 音訊時間。RTF < 1 為即時。
-> Candle 後端已包含 SDOT 內聯組語和預分配記憶體池優化。
+| 指標 | 數值 |
+|------|------|
+| Token 生成速率 | **~5.5 tok/s** |
+| Talker 延遲 | ~40ms/step |
+| Predictor 延遲 | **~108ms/step** |
+| Vocoder (ONNX FP32) | ~4.5s (CPU, 無雜音) |
+| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ 有雜音) |
+| **RTF (2 機)** | **~3.1x** |
+| 語音編碼速度 | ~2s/4s audio |
+| 網路開銷 | <5ms/step (LAN) |
+| 外部依賴 | 僅需 `libonnxruntime.so` |
+
+> RTF = 生成時間 / 音訊時間。越低越好，RTF < 1 為即時。
+
+### 優化歷程
+
+| 優化項目 | Predictor (ms/step) | MEDIUM RTF | 變化 |
+|---|---|---|---|
+| 基準 (Candle Q8_0, 完整 1.3GB GGUF) | 185 | 4.96× | — |
+| + 伺服器端 past_tokens + mem::take() | 185 | 4.79× | −3% |
+| + **精簡版 code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
+
+關鍵發現：完整 1.3GB GGUF 包含 1075MB 的 talker 權重，但 predictor 從未使用。
+精簡至 206MB 的 code-predictor 專用 GGUF 消除了 L2 快取污染 → **預測速度提升 41%**。
 
 ## Support the Project
 

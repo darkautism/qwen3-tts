@@ -41,7 +41,7 @@ Single statically-compiled binary; Talker/Predictor require no external `.so` li
 | **Predictor** | CodePredictor (Candle GGUF Q8_0) + feedback embedding | CPU | 9091 |
 | **Vocoder** | Vocoder (ONNX FP32 CPU) | CPU | 9092 |
 
-Distributes workload across low-cost SBCs or any Linux machines. Token generation: Candle ~3.6 tok/s (default) / GGML ~4.0 tok/s (`--features ggml-backend`).
+Distributes workload across low-cost SBCs or any Linux machines. Token generation: ~5.5 tok/s with stripped code-predictor GGUF (default).
 
 ## Requirements
 
@@ -87,14 +87,8 @@ sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/r
 # Standard build (Candle inference + ONNX FP32 vocoder — pure Rust, no extra .so)
 cargo build --release
 
-# C++ GGML backend (ARM NEON SDOT acceleration, ~2x faster than Candle, needs llama_wrapper.so)
-cargo build --release --features ggml-backend
-
 # RKNN INT8 vocoder (Rockchip NPU only — faster but introduces quantization noise)
 cargo build --release --features rknn-vocoder
-
-# Both enabled
-cargo build --release --features ggml-backend,rknn-vocoder
 # Output: target/release/qwen3-tts (~15-20 MB)
 ```
 
@@ -104,13 +98,12 @@ cargo build --release --features ggml-backend,rknn-vocoder
 
 | Feature | Description | Extra Dependencies | Performance |
 |---------|-------------|-------------------|-------------|
-| (default) | Candle inference + ONNX vocoder | `libonnxruntime.so` | ~3.6 tok/s |
-| `ggml-backend` | C++ GGML/llama.cpp inference | `llama_wrapper.so` + `libllama.so` + `libggml*.so` | **~4.0 tok/s** |
+| (default) | Candle inference + ONNX vocoder | `libonnxruntime.so` | **~5.5 tok/s** |
+| `ggml-predictor` | C++ GGML code predictor | Static `.a` libs | Slower than Candle |
 | `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ has noise |
 
 Default uses Candle (pure Rust) inference — no C/C++ library installation needed.
-Enabling `ggml-backend` leverages ARM NEON SDOT hardware instructions for ~10-15% extra speed.
-The Candle backend already includes SDOT inline assembly optimization + pre-allocated memory pools.
+The Candle backend includes SDOT inline assembly optimization and benefits greatly from stripped GGUF models.
 RKNN vocoder trades audio quality for speed — INT8 quantization introduces audible artifacts.
 
 ## Quick Start
@@ -410,8 +403,8 @@ kautism/qwen3-tts-rk3588/
 │   └── embeddings/               (~1.2 GB)
 ├── predictor/                     # Predictor Worker
 │   ├── code_predictor/
-│   ├── qwen3-tts-0.6b-q8_0.gguf  (1.3 GB, Candle GGUF Q8_0)
-│   │   └── config.json
+│   │   ├── code-predictor-q8_0.gguf  (206 MB, stripped — recommended)
+│   │   └── qwen3-tts-0.6b-q8_0.gguf (1.3 GB, full model)
 │   └── embeddings/
 ├── vocoder/                       # Vocoder Worker
 │   ├── vocoder.onnx              (436 MB, FP32 CPU — default)
@@ -428,21 +421,34 @@ Chinese · English · Deutsch · Русский · Français · 日本語 · 한
 
 ## Performance
 
-| Metric | Candle (default) | GGML (`--features ggml-backend`) |
-|--------|-----------------|----------------------------------|
-| Token generation rate | ~3.6 tok/s | **~4.0 tok/s** |
-| Talker latency | ~60ms/step | ~33ms/step |
-| Predictor latency | ~185ms/step | ~185ms/step |
-| Vocoder (ONNX FP32) | ~4.5s (CPU, clean audio) | ~4.5s |
-| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ has noise) | ~2.7s |
-| RTF — ONNX (default) | ~4.8x | ~3.8x |
-| RTF — RKNN | ~4.2x | ~3.5x |
-| Voice encoding speed | ~2s/4s audio | ~2s/4s audio |
-| Network overhead | <5ms/step (LAN) | <5ms/step (LAN) |
-| External dependencies | `libonnxruntime.so` | Multiple `.so` (see table above) |
+Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN:
 
-> RTF = generation time / audio duration. RTF < 1 is real-time.
-> Candle backend includes SDOT inline assembly and pre-allocated memory pool optimizations.
+| Metric | Value |
+|--------|-------|
+| Token generation rate | **~5.5 tok/s** |
+| Talker latency | ~40ms/step |
+| Predictor latency | **~108ms/step** |
+| Vocoder (ONNX FP32) | ~4.5s (CPU, clean audio) |
+| Vocoder (RKNN INT8) | ~2.7s (NPU, ⚠️ has noise) |
+| **RTF (2 machines)** | **~3.1x** |
+| Voice encoding speed | ~2s/4s audio |
+| Network overhead | <5ms/step (LAN) |
+| External dependencies | `libonnxruntime.so` only |
+
+> RTF = generation time / audio duration. Lower is better; RTF < 1 is real-time.
+
+### Optimization Journey
+
+| Optimization | Predictor (ms/step) | MEDIUM RTF | Change |
+|---|---|---|---|
+| Baseline (Candle Q8_0, full 1.3GB GGUF) | 185 | 4.96× | — |
+| + Server-side past_tokens + mem::take() | 185 | 4.79× | −3% |
+| + **Stripped code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
+
+Key insight: the full 1.3GB GGUF contains talker weights (1075MB) never used by the predictor.
+Stripping to a 206MB code-predictor-only GGUF eliminates L2 cache pollution → **41% faster prediction**.
+
+The `scripts/extract_code_predictor_gguf.py` tool creates stripped GGUFs from full models.
 
 ## Support the Project
 

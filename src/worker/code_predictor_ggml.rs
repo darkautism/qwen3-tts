@@ -4,9 +4,11 @@
 use anyhow::{Context, Result};
 use ndarray::{Array1, Array2};
 use std::ffi::CString;
-use std::io::Read;
 use std::os::raw::{c_char, c_float, c_int};
 use std::path::Path;
+
+use candle_core::quantized::gguf_file;
+use candle_core::Device;
 
 const NUM_GROUPS: usize = 15;
 
@@ -45,9 +47,34 @@ impl CodePredictorGgml {
             );
         }
 
-        // Load codec embeddings from npz
-        let weights_path = cp_dir.join("code_predictor_weights.npz");
-        let codec_embeddings = load_codec_embeddings(&weights_path)?;
+        // Load codec embeddings from GGUF (same tensors as Candle backend)
+        let device = Device::Cpu;
+        let mut file = std::fs::File::open(&gguf_path)
+            .with_context(|| format!("Open {}", gguf_path.display()))?;
+        let ct = gguf_file::Content::read(&mut file)
+            .map_err(|e| anyhow::anyhow!("Read GGUF: {}", e))?;
+
+        let mut codec_embeddings = Vec::with_capacity(NUM_GROUPS);
+        for i in 0..NUM_GROUPS {
+            let emb = ct
+                .tensor(
+                    &mut file,
+                    &format!("code_pred.codec_embd.{}.weight", i),
+                    &device,
+                )
+                .map_err(|e| anyhow::anyhow!("Load codec_embd.{}: {}", i, e))?;
+            let emb_f32 = emb
+                .dequantize(&device)
+                .map_err(|e| anyhow::anyhow!("Dequantize codec_embd.{}: {}", i, e))?;
+            let shape = emb_f32
+                .dims2()
+                .map_err(|e| anyhow::anyhow!("dims2 codec_embd.{}: {}", i, e))?;
+            let data = emb_f32
+                .to_vec2::<f32>()
+                .map_err(|e| anyhow::anyhow!("to_vec2 codec_embd.{}: {}", i, e))?;
+            let flat: Vec<f32> = data.into_iter().flatten().collect();
+            codec_embeddings.push(Array2::from_shape_vec((shape.0, shape.1), flat)?);
+        }
 
         tracing::info!("GGML code predictor ready ({} groups)", NUM_GROUPS);
         Ok(Self {
@@ -88,55 +115,14 @@ impl Drop for CodePredictorGgml {
     }
 }
 
-fn load_codec_embeddings(path: &Path) -> Result<Vec<Array2<f32>>> {
-    let data = std::fs::read(path).with_context(|| format!("Read {}", path.display()))?;
-    let mut cursor = std::io::Cursor::new(&data);
-
-    let mut embeddings = Vec::with_capacity(NUM_GROUPS);
-    let mut archive = zip::ZipArchive::new(&mut cursor).with_context(|| "Parse npz")?;
-
-    for gi in 0..NUM_GROUPS {
-        let name = format!("codec_emb_{}.npy", gi);
-        let mut file = archive
-            .by_name(&name)
-            .with_context(|| format!("Find {} in npz", name))?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        let arr = parse_npy_f32_2d(&buf)?;
-        embeddings.push(arr);
-    }
-    Ok(embeddings)
-}
-
-fn parse_npy_f32_2d(data: &[u8]) -> Result<Array2<f32>> {
-    // Minimal npy parser: magic + header + data
-    if &data[..6] != b"\x93NUMPY" {
-        anyhow::bail!("Not a valid npy file");
-    }
-    let header_len = u16::from_le_bytes([data[8], data[9]]) as usize;
-    let header = std::str::from_utf8(&data[10..10 + header_len])?;
-
-    // Parse shape from header like "'shape': (2048, 1024)"
-    let shape_start = header.find("'shape': (").unwrap() + 10;
-    let shape_end = header[shape_start..].find(')').unwrap() + shape_start;
-    let shape_str = &header[shape_start..shape_end];
-    let dims: Vec<usize> = shape_str
-        .split(',')
-        .map(|s| s.trim().parse::<usize>())
-        .collect::<std::result::Result<_, _>>()?;
-
-    let data_start = 10 + header_len;
-    let float_data: &[f32] = bytemuck::cast_slice(&data[data_start..]);
-    Ok(Array2::from_shape_vec(
-        (dims[0], dims[1]),
-        float_data.to_vec(),
-    )?)
-}
-
 fn find_gguf(cp_dir: &Path) -> Result<std::path::PathBuf> {
+    // GGML backend prefers Q4_0 (highest GGML speedup)
+    // Stripped code-predictor-only GGUFs preferred (much smaller, better cache perf)
     for name in &[
-        "qwen3-tts-0.6b-q8_0.gguf",
+        "code-predictor-q4_0.gguf",
+        "code-predictor-q8_0.gguf",
         "qwen3-tts-0.6b-q4_0.gguf",
+        "qwen3-tts-0.6b-q8_0.gguf",
         "qwen3-tts-0.6b-f16.gguf",
     ] {
         let p = cp_dir.join(name);

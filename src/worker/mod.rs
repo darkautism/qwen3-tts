@@ -1,7 +1,7 @@
 pub mod candle_qwen3;
 pub mod code_predictor;
 pub mod code_predictor_candle;
-#[cfg(feature = "ggml-backend")]
+#[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
 pub mod code_predictor_ggml;
 pub mod embedder;
 pub mod sampling;
@@ -56,7 +56,7 @@ struct PredictorState {
 /// Abstraction over Candle, GGML, or ONNX code predictor
 enum PredictorBackend {
     Candle(code_predictor_candle::CodePredictorCandle),
-    #[cfg(feature = "ggml-backend")]
+    #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
     Ggml(code_predictor_ggml::CodePredictorGgml),
     Onnx(code_predictor::CodePredictor),
 }
@@ -71,7 +71,7 @@ impl PredictorBackend {
     ) -> Result<Vec<i32>> {
         match self {
             PredictorBackend::Candle(cp) => cp.predict(hidden, code_0_embed, temperature),
-            #[cfg(feature = "ggml-backend")]
+            #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
             PredictorBackend::Ggml(cp) => cp.predict(hidden, _code_0, temperature),
             PredictorBackend::Onnx(cp) => cp.predict(hidden, code_0_embed, temperature),
         }
@@ -80,7 +80,7 @@ impl PredictorBackend {
     fn codec_embeddings(&self) -> &Vec<Array2<f32>> {
         match self {
             PredictorBackend::Candle(cp) => &cp.codec_embeddings,
-            #[cfg(feature = "ggml-backend")]
+            #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
             PredictorBackend::Ggml(cp) => &cp.codec_embeddings,
             PredictorBackend::Onnx(cp) => &cp.codec_embeddings,
         }
@@ -143,13 +143,13 @@ impl Worker {
                 .any(|f| cp_dir.join(f).exists());
 
                 let code_pred = if gguf_exists {
-                    #[cfg(feature = "ggml-backend")]
+                    #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
                     {
-                        info!("Using GGML code predictor (ggml-backend, optimized C)");
+                        info!("Using GGML code predictor (optimized C backend)");
                         let ggml = code_predictor_ggml::CodePredictorGgml::load(&cp_dir)?;
                         PredictorBackend::Ggml(ggml)
                     }
-                    #[cfg(not(feature = "ggml-backend"))]
+                    #[cfg(not(any(feature = "ggml-backend", feature = "ggml-predictor")))]
                     {
                         info!("Using Candle code predictor (quantized GGUF)");
                         let candle = code_predictor_candle::CodePredictorCandle::load(&cp_dir)?;

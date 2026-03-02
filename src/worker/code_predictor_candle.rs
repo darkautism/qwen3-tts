@@ -206,7 +206,10 @@ fn sample_top_k(logits: &Tensor, temperature: f32, top_k: usize) -> Result<i32> 
 }
 
 fn find_gguf(cp_dir: &Path) -> Result<std::path::PathBuf> {
+    // Prefer stripped code-predictor-only GGUFs (much smaller, better cache perf)
     let candidates = [
+        "code-predictor-q8_0.gguf",
+        "code-predictor-q4_0.gguf",
         "qwen3-tts-0.6b-q8_0.gguf",
         "qwen3-tts-0.6b-q4_0.gguf",
         "qwen3-tts-0.6b-f16.gguf",

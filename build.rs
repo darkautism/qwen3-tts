@@ -1,6 +1,6 @@
 fn main() {
-    // GGML static libraries only needed with ggml-backend feature
-    #[cfg(feature = "ggml-backend")]
+    // GGML static libraries needed with ggml-backend or ggml-predictor feature
+    #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
     {
         let ggml_base = std::env::var("GGML_LIB_DIR").unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/home/kautism".to_string());
