@@ -42,7 +42,8 @@ async fn main() -> Result<()> {
             repo,
             cores,
             big_cores,
-        }) => cmd_worker(bind, role, models, repo, cores, big_cores).await,
+            quant,
+        }) => cmd_worker(bind, role, models, repo, cores, big_cores, quant).await,
 
         Some(Commands::Mcp) => cmd_mcp().await,
 
@@ -168,6 +169,7 @@ async fn cmd_worker(
     repo: String,
     cores: Option<String>,
     big_cores: bool,
+    quant: String,
 ) -> Result<()> {
     // Pin CPU affinity before loading models (affects all threads)
     if let Some(ref core_spec) = cores {
@@ -202,6 +204,9 @@ async fn cmd_worker(
 
     // Auto-download missing model files
     let role_dir = qwen3_tts_rs::download::ensure_models(role_str, &models_dir, Some(&repo))?;
+
+    // Set quant preference as env var for worker to pick up
+    std::env::set_var("QWEN3_TTS_QUANT", &quant);
 
     qwen3_tts_rs::worker::run_worker(&bind, role_str, role_dir.to_str().unwrap()).await
 }

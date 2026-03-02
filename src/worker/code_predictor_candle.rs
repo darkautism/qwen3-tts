@@ -206,14 +206,26 @@ fn sample_top_k(logits: &Tensor, temperature: f32, top_k: usize) -> Result<i32> 
 }
 
 fn find_gguf(cp_dir: &Path) -> Result<std::path::PathBuf> {
-    // Prefer stripped code-predictor-only GGUFs (much smaller, better cache perf)
-    let candidates = [
-        "code-predictor-q8_0.gguf",
-        "code-predictor-q4_0.gguf",
-        "qwen3-tts-0.6b-q8_0.gguf",
-        "qwen3-tts-0.6b-q4_0.gguf",
-        "qwen3-tts-0.6b-f16.gguf",
-    ];
+    let quant_pref = std::env::var("QWEN3_TTS_QUANT").unwrap_or_else(|_| "q8".to_string());
+
+    // Order candidates based on quantization preference
+    let candidates: Vec<&str> = if quant_pref == "q4" {
+        vec![
+            "code-predictor-q4_0.gguf",
+            "code-predictor-q8_0.gguf",
+            "qwen3-tts-0.6b-q4_0.gguf",
+            "qwen3-tts-0.6b-q8_0.gguf",
+            "qwen3-tts-0.6b-f16.gguf",
+        ]
+    } else {
+        vec![
+            "code-predictor-q8_0.gguf",
+            "code-predictor-q4_0.gguf",
+            "qwen3-tts-0.6b-q8_0.gguf",
+            "qwen3-tts-0.6b-q4_0.gguf",
+            "qwen3-tts-0.6b-f16.gguf",
+        ]
+    };
     for name in &candidates {
         let p = cp_dir.join(name);
         if p.exists() {

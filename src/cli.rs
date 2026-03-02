@@ -71,6 +71,10 @@ pub enum Commands {
         /// Auto-detect and pin to big (A76) CPU cores (RK3588)
         #[arg(long)]
         big_cores: bool,
+
+        /// Quantization preference for code predictor (q4 = faster, q8 = more accurate)
+        #[arg(long, default_value = "q8")]
+        quant: String,
     },
 
     /// Start MCP server (stdio transport)

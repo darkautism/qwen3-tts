@@ -134,13 +134,14 @@ impl Pipeline {
         let eos_force = (expected_tokens as f32 * d.eos_force_ratio) as usize;
         let eos_max_boost: f32 = d.eos_max_boost;
 
-        let mut all_codes: Vec<Vec<i64>> = Vec::new();
+        let mut all_codes: Vec<Vec<i64>> = Vec::with_capacity(params.max_tokens);
         // First step uses empty feedback (talker uses its own last hidden)
         let mut feedback_b64 = encode_f32(&[0.0f32; HIDDEN_SIZE]);
         let mut first_step = true;
         // Vocoder streaming: send partial batches during generation
         let vocode_chunk_size = 64usize;
         let mut vocode_batches_sent = 0usize;
+        let mut token_codes = Vec::with_capacity(16);
 
         for i in 0..params.max_tokens {
             if i >= eos_force {
@@ -224,9 +225,10 @@ impl Pipeline {
                 .to_string();
 
             // Collect full 16-group code token
-            let mut token_codes = vec![code_0 as i64];
+            token_codes.clear();
+            token_codes.push(code_0 as i64);
             token_codes.extend_from_slice(&codes_1_15);
-            all_codes.push(token_codes);
+            all_codes.push(token_codes.clone());
 
             // Vocoder streaming: send partial batch when we have enough tokens
             if all_codes.len() >= (vocode_batches_sent + 1) * vocode_chunk_size {

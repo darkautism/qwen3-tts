@@ -67,11 +67,8 @@ impl Vocoder {
 
             // Pad to max_tokens
             let mut padded = vec![0i64; self.max_tokens * 16];
-            for i in 0..chunk_len {
-                for j in 0..16 {
-                    padded[i * 16 + j] = codes[(chunk_start + i) * 16 + j];
-                }
-            }
+            let src = &codes[chunk_start * 16..chunk_end * 16];
+            padded[..src.len()].copy_from_slice(src);
 
             let chunk_audio = match &mut self.backend {
                 VocoderBackend::Onnx(onnx) => onnx.run(&padded, self.max_tokens)?,
