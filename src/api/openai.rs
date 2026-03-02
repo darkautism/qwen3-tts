@@ -1,16 +1,19 @@
 use axum::{
     extract::State,
     http::{header, StatusCode},
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tower_http::cors::CorsLayer;
 
 use crate::config::Config;
 use crate::pipeline::{Pipeline, SynthesisParams};
+
+static INDEX_HTML: &str = include_str!("static/index.html");
 
 pub struct AppState {
     pub pipeline: Arc<Mutex<Pipeline>>,
@@ -19,9 +22,11 @@ pub struct AppState {
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/", get(index_page))
         .route("/v1/audio/speech", post(create_speech))
         .route("/v1/models", get(list_models))
         .route("/health", get(health))
+        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
@@ -89,6 +94,7 @@ async fn create_speech(
         temperature: state.config.defaults.temperature,
         cp_temperature: state.config.defaults.cp_temperature,
         repetition_penalty: state.config.defaults.repetition_penalty,
+        aggressive: state.config.defaults.aggressive,
     };
 
     let mut pipeline = state.pipeline.lock().await;
@@ -142,4 +148,8 @@ async fn list_models() -> Json<ModelsResponse> {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn index_page() -> Html<&'static str> {
+    Html(INDEX_HTML)
 }

@@ -49,6 +49,9 @@ pub struct DefaultsConfig {
     /// Maximum EOS logit boost (default: 25.0)
     #[serde(default = "default_eos_max_boost")]
     pub eos_max_boost: f32,
+    /// Aggressive mode: overlap talker_step and code_predict using stale feedback
+    #[serde(default)]
+    pub aggressive: bool,
 }
 
 fn default_eos_start_ratio() -> f32 {
@@ -82,6 +85,7 @@ impl Default for DefaultsConfig {
             eos_max_ratio: default_eos_max_ratio(),
             eos_force_ratio: default_eos_force_ratio(),
             eos_max_boost: default_eos_max_boost(),
+            aggressive: false,
         }
     }
 }

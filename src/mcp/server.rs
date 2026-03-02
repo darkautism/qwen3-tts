@@ -218,6 +218,7 @@ impl McpServer {
             temperature: self.config.defaults.temperature,
             cp_temperature: self.config.defaults.cp_temperature,
             repetition_penalty: self.config.defaults.repetition_penalty,
+            aggressive: self.config.defaults.aggressive,
         };
 
         let mut pipeline = self.pipeline.lock().await;

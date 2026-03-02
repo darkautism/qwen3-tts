@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Qwen3-TTS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#212121;color:#ececec;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.container{width:100%;max-width:680px;padding:24px}
+h1{font-size:1.4rem;font-weight:600;margin-bottom:24px;text-align:center;color:#fff}
+.controls{display:flex;gap:12px;margin-bottom:16px;align-items:center}
+select{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #444;background:#2a2a2a;color:#ececec;font-size:14px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+select:focus{outline:none;border-color:#10a37f}
+.input-wrap{position:relative;margin-bottom:16px}
+textarea{width:100%;min-height:120px;padding:16px;padding-right:56px;border-radius:12px;border:1px solid #444;background:#2a2a2a;color:#ececec;font-size:15px;line-height:1.5;resize:vertical;font-family:inherit}
+textarea:focus{outline:none;border-color:#10a37f}
+textarea::placeholder{color:#888}
+.send-btn{position:absolute;right:12px;bottom:12px;width:36px;height:36px;border-radius:8px;border:none;background:#10a37f;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}
+.send-btn:hover{background:#0d8c6d}
+.send-btn:disabled{background:#444;cursor:not-allowed}
+.send-btn svg{width:18px;height:18px}
+.result{margin-top:16px;text-align:center}
+audio{width:100%;margin-top:8px;border-radius:8px}
+.status{font-size:13px;color:#888;margin-top:8px;min-height:20px}
+.setup-banner{background:#2a2a2a;border:1px solid #444;border-radius:12px;padding:16px;margin-bottom:20px;font-size:13px;color:#aaa;line-height:1.6}
+.setup-banner a{color:#10a37f;cursor:pointer;text-decoration:underline}
+.settings-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+.settings-modal.open{display:flex}
+.settings-box{background:#2a2a2a;border:1px solid #444;border-radius:16px;padding:24px;width:90%;max-width:480px}
+.settings-box h2{font-size:1.1rem;margin-bottom:16px;color:#fff}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:13px;color:#aaa;margin-bottom:4px}
+.field input{width:100%;padding:8px 12px;border-radius:8px;border:1px solid #444;background:#333;color:#ececec;font-size:14px}
+.field input:focus{outline:none;border-color:#10a37f}
+.btn-row{display:flex;gap:12px;margin-top:16px}
+.btn{padding:8px 20px;border-radius:8px;border:none;font-size:14px;cursor:pointer}
+.btn-primary{background:#10a37f;color:#fff}
+.btn-primary:hover{background:#0d8c6d}
+.btn-secondary{background:#444;color:#ccc}
+.btn-secondary:hover{background:#555}
+.lang-select{width:120px;flex:none}
+.voice-info{font-size:11px;color:#666;margin-top:4px}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>🗣️ Qwen3-TTS</h1>
+
+  <div id="setupBanner" class="setup-banner" style="display:none">
+    ⚙️ Workers not configured. <a onclick="openSettings()">Set up worker IPs</a> to get started.
+  </div>
+
+  <div class="controls">
+    <select id="voiceSelect">
+      <option value="default">Default voice</option>
+    </select>
+    <select id="langSelect" class="lang-select">
+      <option value="">Auto</option>
+      <option value="chinese" selected>Chinese</option>
+      <option value="english">English</option>
+      <option value="japanese">Japanese</option>
+      <option value="korean">Korean</option>
+    </select>
+    <button class="btn btn-secondary" onclick="openSettings()" title="Settings">⚙️</button>
+  </div>
+
+  <div class="input-wrap">
+    <textarea id="textInput" placeholder="Type text to synthesize..." rows="4"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="synthesize()" title="Synthesize">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+    </button>
+  </div>
+
+  <div class="result" id="result"></div>
+  <div class="status" id="status"></div>
+</div>
+
+<!-- Settings modal -->
+<div class="settings-modal" id="settingsModal">
+  <div class="settings-box">
+    <h2>⚙️ Settings</h2>
+    <p style="font-size:13px;color:#888;margin-bottom:16px">
+      Configure this only if running the server separately from the web UI.<br>
+      Leave as default if accessing the built-in server.
+    </p>
+    <div class="field">
+      <label>API Endpoint</label>
+      <input id="apiEndpoint" type="text" placeholder="http://localhost:8080">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+      <button class="btn btn-secondary" onclick="closeSettings()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const VOICES_HF = 'https://huggingface.co/api/models/kautism/qwen3_tts_voices_json/tree/main';
+let voices = [];
+
+function getApiBase() {
+  return localStorage.getItem('qwen3_api') || '';
+}
+
+function openSettings() {
+  document.getElementById('apiEndpoint').value = getApiBase();
+  document.getElementById('settingsModal').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+function saveSettings() {
+  const ep = document.getElementById('apiEndpoint').value.replace(/\/+$/, '');
+  if (ep) localStorage.setItem('qwen3_api', ep);
+  else localStorage.removeItem('qwen3_api');
+  closeSettings();
+}
+
+async function loadVoices() {
+  const sel = document.getElementById('voiceSelect');
+  try {
+    const resp = await fetch(VOICES_HF);
+    if (!resp.ok) throw new Error('HF API error');
+    const files = await resp.json();
+    voices = files
+      .filter(f => f.path.endsWith('.json'))
+      .map(f => {
+        const name = f.path.replace('.json', '');
+        const parts = name.split('-');
+        const lang = parts[0] || '';
+        const rest = parts.slice(1).join('-');
+        const uParts = rest.split('_');
+        const game = uParts[0] || '';
+        const charEmo = uParts.slice(1).join('_');
+        const lastDash = charEmo.lastIndexOf('-');
+        let char_ = charEmo, emotion = '';
+        if (lastDash > 0) {
+          char_ = charEmo.substring(0, lastDash);
+          emotion = charEmo.substring(lastDash + 1);
+        }
+        return { file: f.path, name, game, char: char_, emotion, lang };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+
+    // Group by game
+    const games = {};
+    voices.forEach(v => {
+      if (!games[v.game]) games[v.game] = [];
+      games[v.game].push(v);
+    });
+
+    Object.keys(games).sort((a,b) => a.localeCompare(b, 'zh')).forEach(game => {
+      const group = document.createElement('optgroup');
+      group.label = game;
+      games[game].forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.file;
+        opt.textContent = `${v.char}${v.emotion ? ' (' + v.emotion + ')' : ''}`;
+        group.appendChild(opt);
+      });
+      sel.appendChild(group);
+    });
+  } catch (e) {
+    console.warn('Failed to load voices from HF:', e);
+  }
+}
+
+async function synthesize() {
+  const text = document.getElementById('textInput').value.trim();
+  if (!text) return;
+
+  const btn = document.getElementById('sendBtn');
+  const status = document.getElementById('status');
+  const result = document.getElementById('result');
+  const voice = document.getElementById('voiceSelect').value;
+  const lang = document.getElementById('langSelect').value;
+
+  btn.disabled = true;
+  status.textContent = 'Synthesizing...';
+  result.innerHTML = '';
+
+  const t0 = performance.now();
+
+  try {
+    const base = getApiBase();
+    const body = { input: text, model: 'qwen3-tts' };
+    if (voice && voice !== 'default') {
+      // Download voice JSON from HF and include inline
+      status.textContent = 'Loading voice profile...';
+      const vUrl = `https://huggingface.co/kautism/qwen3_tts_voices_json/resolve/main/${voice}`;
+      const vResp = await fetch(vUrl);
+      if (!vResp.ok) throw new Error('Failed to download voice: ' + voice);
+      // Send voice filename — server resolves it
+      body.voice = voice;
+    }
+    if (lang) body.language = lang;
+
+    status.textContent = 'Synthesizing...';
+    const resp = await fetch(`${base}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: { message: resp.statusText } }));
+      throw new Error(err.error?.message || 'Synthesis failed');
+    }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+
+    result.innerHTML = `<audio controls autoplay src="${url}"></audio>`;
+    status.textContent = `Done in ${elapsed}s`;
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+    result.innerHTML = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Ctrl+Enter to send
+document.getElementById('textInput').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    synthesize();
+  }
+});
+
+// Init
+loadVoices();
+</script>
+</body>
+</html>

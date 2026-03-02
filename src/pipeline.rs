@@ -22,6 +22,8 @@ pub struct SynthesisParams {
     pub temperature: f32,
     pub cp_temperature: f32,
     pub repetition_penalty: f32,
+    /// Overlap talker_step with code_predict using stale feedback (⚠️ may affect quality)
+    pub aggressive: bool,
 }
 
 /// Result of synthesis
@@ -128,7 +130,11 @@ impl Pipeline {
             .await?;
 
         // Phase 3: Autoregressive generation
-        info!("Generating tokens...");
+        if params.aggressive {
+            info!("Generating tokens (aggressive: speculative pipeline)...");
+        } else {
+            info!("Generating tokens...");
+        }
         let d = &self.config.defaults;
         let eos_start = (expected_tokens as f32 * d.eos_start_ratio) as usize;
         let eos_max_step = (expected_tokens as f32 * d.eos_max_ratio) as usize;
@@ -136,13 +142,14 @@ impl Pipeline {
         let eos_max_boost: f32 = d.eos_max_boost;
 
         let mut all_codes: Vec<Vec<i64>> = Vec::with_capacity(params.max_tokens);
-        // First step uses empty feedback (talker uses its own last hidden)
         let mut feedback_b64 = encode_f32(&[0.0f32; HIDDEN_SIZE]);
         let mut first_step = true;
-        // Vocoder streaming: send partial batches during generation
         let vocode_chunk_size = 64usize;
         let mut vocode_batches_sent = 0usize;
         let mut token_codes = Vec::with_capacity(16);
+
+        // Aggressive mode state: pending code_predict request + its code_0
+        let mut pending_cp: Option<i32> = None; // code_0 of the pending request
 
         for i in 0..params.max_tokens {
             if i >= eos_force {
@@ -160,6 +167,7 @@ impl Pipeline {
             };
 
             // Talker step → hidden_state + code_0
+            // In aggressive mode, this runs WHILE code_predict[i-1] is still executing on remote
             let t0 = std::time::Instant::now();
             let fb = if first_step {
                 "__first__".to_string()
@@ -178,6 +186,51 @@ impl Pipeline {
             let talker_ms = t0.elapsed().as_millis();
 
             first_step = false;
+
+            // In aggressive mode, collect previous code_predict result AFTER talker_step
+            // (code_predict ran in background during talker_step — true overlap)
+            if params.aggressive && pending_cp.is_some() {
+                let prev_code_0 = pending_cp.take().unwrap();
+                let cp_resp = self.predictor.read_response().await?;
+                let (codes_1_15, fb) = match cp_resp.data {
+                    ResponseData::CodePredict {
+                        codes,
+                        feedback_embedding,
+                    } => (codes, feedback_embedding),
+                    _ => anyhow::bail!("Unexpected response from code_predict"),
+                };
+                // Store feedback but DON'T use it for current step (already done)
+                // It will be used for talker_step[i+1]
+                feedback_b64 = fb;
+
+                token_codes.clear();
+                token_codes.push(prev_code_0 as i64);
+                token_codes.extend_from_slice(&codes_1_15);
+                all_codes.push(token_codes.clone());
+
+                // Vocoder streaming
+                if all_codes.len() >= (vocode_batches_sent + 1) * vocode_chunk_size {
+                    let batch_start = vocode_batches_sent * vocode_chunk_size;
+                    let batch_end = (vocode_batches_sent + 1) * vocode_chunk_size;
+                    let batch_codes: Vec<i64> = all_codes[batch_start..batch_end]
+                        .iter()
+                        .flatten()
+                        .copied()
+                        .collect();
+                    let batch_n = batch_end - batch_start;
+                    debug!(
+                        "Vocoder streaming: sending batch {} ({} tokens)",
+                        vocode_batches_sent, batch_n
+                    );
+                    self.vocoder
+                        .send_request(&Request::Vocode {
+                            codes: encode_i64(&batch_codes),
+                            n_tokens: batch_n,
+                        })
+                        .await?;
+                    vocode_batches_sent += 1;
+                }
+            }
 
             let (hidden_b64, code_0, is_eos) = match talker_resp.data {
                 ResponseData::TalkerStep {
@@ -200,68 +253,111 @@ impl Pipeline {
                 break;
             }
 
-            // CodePredictor → codes[1-15] + feedback embedding
-            let t1 = std::time::Instant::now();
-            let cp_resp = self
-                .predictor
-                .call(&Request::CodePredict {
-                    hidden_state: hidden_b64,
-                    code_0,
-                    temperature: params.cp_temperature,
-                })
-                .await?;
-            let cp_ms = t1.elapsed().as_millis();
-
-            let (codes_1_15, fb) = match cp_resp.data {
-                ResponseData::CodePredict {
-                    codes,
-                    feedback_embedding,
-                } => (codes, feedback_embedding),
-                _ => anyhow::bail!("Unexpected response from code_predict"),
-            };
-
-            feedback_b64 = fb;
-
-            // Collect full 16-group code token
-            token_codes.clear();
-            token_codes.push(code_0 as i64);
-            token_codes.extend_from_slice(&codes_1_15);
-            all_codes.push(token_codes.clone());
-
-            // Vocoder streaming: send partial batch when we have enough tokens
-            if all_codes.len() >= (vocode_batches_sent + 1) * vocode_chunk_size {
-                let batch_start = vocode_batches_sent * vocode_chunk_size;
-                let batch_end = (vocode_batches_sent + 1) * vocode_chunk_size;
-                let batch_codes: Vec<i64> = all_codes[batch_start..batch_end]
-                    .iter()
-                    .flatten()
-                    .copied()
-                    .collect();
-                let batch_n = batch_end - batch_start;
-                debug!(
-                    "Vocoder streaming: sending batch {} ({} tokens)",
-                    vocode_batches_sent, batch_n
-                );
-                self.vocoder
-                    .send_request(&Request::Vocode {
-                        codes: encode_i64(&batch_codes),
-                        n_tokens: batch_n,
+            if params.aggressive {
+                // Fire-and-forget: send code_predict without waiting
+                self.predictor
+                    .send_request(&Request::CodePredict {
+                        hidden_state: hidden_b64,
+                        code_0,
+                        temperature: params.cp_temperature,
                     })
                     .await?;
-                vocode_batches_sent += 1;
-            }
+                pending_cp = Some(code_0);
+                // feedback_b64 remains stale from previous iteration — that's the trade-off
 
-            if (i + 1) % 10 == 0 {
-                let elapsed = start.elapsed().as_secs_f32();
-                let rate = (i + 1) as f32 / elapsed;
-                info!(
-                    "[{}/{}] rate={:.1} tok/s, talker={}ms, cp={}ms",
-                    i + 1,
-                    params.max_tokens,
-                    rate,
-                    talker_ms,
-                    cp_ms
-                );
+                if (i + 1) % 10 == 0 {
+                    let elapsed = start.elapsed().as_secs_f32();
+                    let rate = (i + 1) as f32 / elapsed;
+                    info!(
+                        "[{}/{}] rate={:.1} tok/s, talker={}ms (aggressive)",
+                        i + 1,
+                        params.max_tokens,
+                        rate,
+                        talker_ms
+                    );
+                }
+            } else {
+                // Normal mode: wait for code_predict before next step
+                let t1 = std::time::Instant::now();
+                let cp_resp = self
+                    .predictor
+                    .call(&Request::CodePredict {
+                        hidden_state: hidden_b64,
+                        code_0,
+                        temperature: params.cp_temperature,
+                    })
+                    .await?;
+                let cp_ms = t1.elapsed().as_millis();
+
+                let (codes_1_15, fb) = match cp_resp.data {
+                    ResponseData::CodePredict {
+                        codes,
+                        feedback_embedding,
+                    } => (codes, feedback_embedding),
+                    _ => anyhow::bail!("Unexpected response from code_predict"),
+                };
+
+                feedback_b64 = fb;
+
+                // Collect full 16-group code token
+                token_codes.clear();
+                token_codes.push(code_0 as i64);
+                token_codes.extend_from_slice(&codes_1_15);
+                all_codes.push(token_codes.clone());
+
+                // Vocoder streaming: send partial batch when we have enough tokens
+                if all_codes.len() >= (vocode_batches_sent + 1) * vocode_chunk_size {
+                    let batch_start = vocode_batches_sent * vocode_chunk_size;
+                    let batch_end = (vocode_batches_sent + 1) * vocode_chunk_size;
+                    let batch_codes: Vec<i64> = all_codes[batch_start..batch_end]
+                        .iter()
+                        .flatten()
+                        .copied()
+                        .collect();
+                    let batch_n = batch_end - batch_start;
+                    debug!(
+                        "Vocoder streaming: sending batch {} ({} tokens)",
+                        vocode_batches_sent, batch_n
+                    );
+                    self.vocoder
+                        .send_request(&Request::Vocode {
+                            codes: encode_i64(&batch_codes),
+                            n_tokens: batch_n,
+                        })
+                        .await?;
+                    vocode_batches_sent += 1;
+                }
+
+                if (i + 1) % 10 == 0 {
+                    let elapsed = start.elapsed().as_secs_f32();
+                    let rate = (i + 1) as f32 / elapsed;
+                    info!(
+                        "[{}/{}] rate={:.1} tok/s, talker={}ms, cp={}ms",
+                        i + 1,
+                        params.max_tokens,
+                        rate,
+                        talker_ms,
+                        cp_ms
+                    );
+                }
+            }
+        }
+
+        // Aggressive mode: collect the last pending code_predict
+        if params.aggressive {
+            if let Some(prev_code_0) = pending_cp.take() {
+                let cp_resp = self.predictor.read_response().await?;
+                let (codes_1_15, _fb) = match cp_resp.data {
+                    ResponseData::CodePredict {
+                        codes,
+                        feedback_embedding,
+                    } => (codes, feedback_embedding),
+                    _ => anyhow::bail!("Unexpected response from code_predict"),
+                };
+                token_codes.clear();
+                token_codes.push(prev_code_0 as i64);
+                token_codes.extend_from_slice(&codes_1_15);
+                all_codes.push(token_codes.clone());
             }
         }
 

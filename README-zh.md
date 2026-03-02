@@ -275,6 +275,7 @@ qwen3-tts "你好世界"
 | `qwen3-tts speak "文字" -o file.wav` | 指定輸出檔案 |
 | `qwen3-tts speak "文字" --lang english` | 指定語言 |
 | `qwen3-tts speak "文字" --voice voice.json` | 聲音克隆 |
+| `qwen3-tts speak "文字" --aggressive` | 推測式管線（⚠️ 實驗性） |
 | `qwen3-tts encode-voice -a ref.wav -r "文字" -o voice.json` | 製作聲音檔 (ARM64 原生) |
 | `qwen3-tts serve --port 8080` | 啟動 OpenAI 相容 API |
 | `qwen3-tts mcp` | 啟動 MCP 伺服器 (stdio) |
@@ -285,12 +286,25 @@ qwen3-tts "你好世界"
 | `qwen3-tts worker -r talker --cores 4-7` | Worker 固定在指定核心上 |
 | `qwen3-tts init --predictor-ip <IP>` | 產生配置檔 |
 
-## OpenAI 相容 API
+## OpenAI 相容 API 與 Web UI
 
 ```bash
-# 啟動伺服器
+# 啟動伺服器（內建 Web UI 於 http://localhost:8080）
 qwen3-tts serve --port 8080
 ```
+
+### Web UI
+
+在瀏覽器開啟 `http://<伺服器-ip>:8080`。內建 Web UI 提供：
+
+- **文字輸入框** — Ctrl+Enter 合成語音
+- **聲音選擇器** — 從 [HuggingFace](https://huggingface.co/kautism/qwen3_tts_voices_json) 載入 500+ 聲音，依遊戲/角色分組
+- **語言選擇** （中文、英文、日文、韓文）
+- **直接在瀏覽器播放音訊**
+
+無需安裝任何東西 — 純 HTML/JS，由同一個二進位檔提供。
+
+### REST API
 
 ```bash
 # 基本合成
@@ -480,6 +494,32 @@ RUSTFLAGS='-C target-feature=+dotprod' cargo build --release
 ```
 
 Cortex-A76 及更新的核心必備。否則量化推理使用較慢的 vmull+vpaddl 路徑。
+
+### 5. 推測式管線 (`--aggressive`) ⚠️ 實驗性
+
+```bash
+# 重疊 talker_step 與 code_predict — 使用延遲回饋
+qwen3-tts speak "你的文字" --aggressive
+```
+
+或在設定檔中啟用：
+```toml
+[defaults]
+aggressive = true
+```
+
+此模式透過使用延遲一步的回饋嵌入，讓 talker LLM 步驟與 code predictor 並行執行。
+Token 生成速率顯著提升（~60% 更快），但**語音品質嚴重下降**。
+
+| 測試 | 一般 tok/s | 激進 tok/s | 一般 RTF | 激進 RTF |
+|------|-----------|-----------|---------|---------|
+| SHORT | 4.5 | 4.6 | 7.80× | 7.00× |
+| MEDIUM | 5.4 | **8.1** | 3.52× | **2.67×** |
+| LONG | 5.2 | **8.5** | 2.76× | **2.32×** |
+
+> ⚠️ **警告：** 激進模式會產生含糊/無法辨識的語音。
+> 回饋嵌入對語音連貫性至關重要，延遲一步的資料會導致快速誤差累積。
+> 此模式僅供基準測試與實驗使用，不建議用於生產環境。
 
 ### 累積效果
 

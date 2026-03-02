@@ -33,6 +33,10 @@ pub enum Commands {
         /// Max tokens to generate
         #[arg(long)]
         max_tokens: Option<usize>,
+
+        /// Speculative pipeline: overlap talker/predictor using stale feedback (⚠️ may affect quality)
+        #[arg(long)]
+        aggressive: bool,
     },
 
     /// Start API server (OpenAI-compatible + MCP)
