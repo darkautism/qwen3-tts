@@ -13,11 +13,18 @@ pub struct Pipeline {
     config: Config,
 }
 
+/// Inline voice data (from web UI / API)
+pub struct InlineVoiceData {
+    pub codec_tokens: Vec<Vec<i64>>,
+    pub ref_text: Option<String>,
+}
+
 /// Parameters for a single TTS request
 pub struct SynthesisParams {
     pub text: String,
     pub language: String,
     pub voice: Option<String>,
+    pub voice_data: Option<InlineVoiceData>,
     pub max_tokens: usize,
     pub temperature: f32,
     pub cp_temperature: f32,
@@ -75,7 +82,26 @@ impl Pipeline {
 
         // Phase 1: Tokenize and build prefix embeddings (on talker worker)
         info!("Tokenizing and embedding text...");
-        let ref_tokens = if let Some(ref voice) = params.voice {
+        let ref_tokens = if let Some(ref vd) = params.voice_data {
+            // Inline voice data (from web UI)
+            let flat: Vec<i64> = vd.codec_tokens.iter().flatten().copied().collect();
+            let tokens_b64 = encode_i64(&flat);
+            let n_tokens = vd.codec_tokens.len();
+            self.talker
+                .call(&Request::LoadVoice {
+                    codec_tokens: tokens_b64,
+                    n_tokens,
+                    ref_text: vd.ref_text.clone(),
+                })
+                .await?;
+            self.talker
+                .call(&Request::TokenizeAndEmbed {
+                    text: params.text.clone(),
+                    language: params.language.clone(),
+                    ref_codec_tokens: Some("__loaded__".into()),
+                })
+                .await?
+        } else if let Some(ref voice) = params.voice {
             // Read voice file locally and send data to worker
             let (codec_tokens_i64, ref_text) = crate::voice_loader::load_voice_file(voice)?;
             let tokens_b64 = encode_i64(&codec_tokens_i64);

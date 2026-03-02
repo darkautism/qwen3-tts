@@ -112,6 +112,7 @@ async fn cmd_speak(
             text,
             language,
             voice,
+            voice_data: None,
             max_tokens: max_tok,
             temperature: config.defaults.temperature,
             cp_temperature: config.defaults.cp_temperature,
@@ -130,7 +131,7 @@ async fn cmd_speak(
 }
 
 async fn cmd_serve(port: Option<u16>, with_mcp: bool) -> Result<()> {
-    let config = Config::load(None)?;
+    let (config, config_path) = Config::load_with_path(None)?;
     let listen_port = port.unwrap_or(config.server.port);
 
     let pipeline = Pipeline::new(config.clone()).await?;
@@ -149,7 +150,8 @@ async fn cmd_serve(port: Option<u16>, with_mcp: bool) -> Result<()> {
 
     let state = Arc::new(api::openai::AppState {
         pipeline: pipeline.clone(),
-        config: config.clone(),
+        config: Mutex::new(config.clone()),
+        config_path,
     });
 
     let app = api::openai::router(state);

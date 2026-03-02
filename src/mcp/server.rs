@@ -214,6 +214,7 @@ impl McpServer {
             text,
             language,
             voice,
+            voice_data: None,
             max_tokens: self.config.defaults.max_tokens,
             temperature: self.config.defaults.temperature,
             cp_temperature: self.config.defaults.cp_temperature,

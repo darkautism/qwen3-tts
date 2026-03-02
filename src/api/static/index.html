@@ -23,34 +23,36 @@ textarea::placeholder{color:#888}
 .result{margin-top:16px;text-align:center}
 audio{width:100%;margin-top:8px;border-radius:8px}
 .status{font-size:13px;color:#888;margin-top:8px;min-height:20px}
-.setup-banner{background:#2a2a2a;border:1px solid #444;border-radius:12px;padding:16px;margin-bottom:20px;font-size:13px;color:#aaa;line-height:1.6}
-.setup-banner a{color:#10a37f;cursor:pointer;text-decoration:underline}
+.lang-select{width:120px;flex:none}
 .settings-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
 .settings-modal.open{display:flex}
-.settings-box{background:#2a2a2a;border:1px solid #444;border-radius:16px;padding:24px;width:90%;max-width:480px}
-.settings-box h2{font-size:1.1rem;margin-bottom:16px;color:#fff}
+.settings-box{background:#2a2a2a;border:1px solid #444;border-radius:16px;padding:24px;width:90%;max-width:560px;max-height:90vh;overflow-y:auto}
+.settings-box h2{font-size:1.1rem;margin-bottom:12px;color:#fff}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:13px;color:#aaa;margin-bottom:4px}
 .field input{width:100%;padding:8px 12px;border-radius:8px;border:1px solid #444;background:#333;color:#ececec;font-size:14px}
 .field input:focus{outline:none;border-color:#10a37f}
+.field-row{display:flex;gap:8px}
+.field-row .field{flex:1}
+.field-row .field.port{flex:0 0 100px}
 .btn-row{display:flex;gap:12px;margin-top:16px}
 .btn{padding:8px 20px;border-radius:8px;border:none;font-size:14px;cursor:pointer}
 .btn-primary{background:#10a37f;color:#fff}
 .btn-primary:hover{background:#0d8c6d}
 .btn-secondary{background:#444;color:#ccc}
 .btn-secondary:hover{background:#555}
-.lang-select{width:120px;flex:none}
-.voice-info{font-size:11px;color:#666;margin-top:4px}
+.instructions{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:#999;line-height:1.6}
+.instructions code{background:#333;padding:2px 6px;border-radius:4px;color:#10a37f;font-size:11px}
+.instructions h3{color:#ccc;font-size:13px;margin-bottom:8px}
+.save-status{font-size:12px;margin-top:8px;min-height:16px}
+.save-status.ok{color:#10a37f}
+.save-status.err{color:#e74c3c}
 </style>
 </head>
 <body>
 
 <div class="container">
   <h1>🗣️ Qwen3-TTS</h1>
-
-  <div id="setupBanner" class="setup-banner" style="display:none">
-    ⚙️ Workers not configured. <a onclick="openSettings()">Set up worker IPs</a> to get started.
-  </div>
 
   <div class="controls">
     <select id="voiceSelect">
@@ -67,7 +69,7 @@ audio{width:100%;margin-top:8px;border-radius:8px}
   </div>
 
   <div class="input-wrap">
-    <textarea id="textInput" placeholder="Type text to synthesize..." rows="4"></textarea>
+    <textarea id="textInput" placeholder="Type text to synthesize... (Ctrl+Enter to send)" rows="4"></textarea>
     <button class="send-btn" id="sendBtn" onclick="synthesize()" title="Synthesize">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
     </button>
@@ -80,42 +82,111 @@ audio{width:100%;margin-top:8px;border-radius:8px}
 <!-- Settings modal -->
 <div class="settings-modal" id="settingsModal">
   <div class="settings-box">
-    <h2>⚙️ Settings</h2>
-    <p style="font-size:13px;color:#888;margin-bottom:16px">
-      Configure this only if running the server separately from the web UI.<br>
-      Leave as default if accessing the built-in server.
-    </p>
-    <div class="field">
-      <label>API Endpoint</label>
-      <input id="apiEndpoint" type="text" placeholder="http://localhost:8080">
+    <h2>⚙️ Worker Configuration</h2>
+
+    <div class="instructions">
+      <h3>Setup Instructions</h3>
+      Each worker runs on an ARM SBC (e.g. RK3588). Start workers on each machine:<br><br>
+      <b>Machine 1 — Talker</b><br>
+      <code>qwen3-tts worker --role talker --bind 0.0.0.0:9090 --big-cores</code><br><br>
+      <b>Machine 2 — Predictor</b> (use <code>--quant q4</code> for speed)<br>
+      <code>qwen3-tts worker --role predictor --bind 0.0.0.0:9091 --big-cores --quant q4</code><br><br>
+      <b>Machine 2 — Vocoder</b><br>
+      <code>qwen3-tts worker --role vocoder --bind 0.0.0.0:9092 --big-cores</code><br><br>
+      Enter the host:port for each worker below. Changes are saved to the config file and reconnected immediately.
     </div>
+
+    <h3 style="color:#ccc;font-size:13px;margin-bottom:8px">Talker</h3>
+    <div class="field-row">
+      <div class="field"><label>Host</label><input id="cfgTalkerHost" type="text" placeholder="127.0.0.1"></div>
+      <div class="field port"><label>Port</label><input id="cfgTalkerPort" type="number" placeholder="9090"></div>
+    </div>
+
+    <h3 style="color:#ccc;font-size:13px;margin-bottom:8px">Predictor</h3>
+    <div class="field-row">
+      <div class="field"><label>Host</label><input id="cfgPredictorHost" type="text" placeholder="192.168.50.171"></div>
+      <div class="field port"><label>Port</label><input id="cfgPredictorPort" type="number" placeholder="9091"></div>
+    </div>
+
+    <h3 style="color:#ccc;font-size:13px;margin-bottom:8px">Vocoder</h3>
+    <div class="field-row">
+      <div class="field"><label>Host</label><input id="cfgVocoderHost" type="text" placeholder="192.168.50.171"></div>
+      <div class="field port"><label>Port</label><input id="cfgVocoderPort" type="number" placeholder="9092"></div>
+    </div>
+
     <div class="btn-row">
-      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+      <button class="btn btn-primary" onclick="saveConfig()">Save & Reconnect</button>
       <button class="btn btn-secondary" onclick="closeSettings()">Cancel</button>
     </div>
+    <div class="save-status" id="saveStatus"></div>
   </div>
 </div>
 
 <script>
 const VOICES_HF = 'https://huggingface.co/api/models/kautism/qwen3_tts_voices_json/tree/main';
-let voices = [];
+const voiceCache = {};
 
 function getApiBase() {
-  return localStorage.getItem('qwen3_api') || '';
+  return '';
 }
 
 function openSettings() {
-  document.getElementById('apiEndpoint').value = getApiBase();
+  loadConfig();
   document.getElementById('settingsModal').classList.add('open');
 }
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
+  document.getElementById('saveStatus').textContent = '';
 }
-function saveSettings() {
-  const ep = document.getElementById('apiEndpoint').value.replace(/\/+$/, '');
-  if (ep) localStorage.setItem('qwen3_api', ep);
-  else localStorage.removeItem('qwen3_api');
-  closeSettings();
+
+async function loadConfig() {
+  try {
+    const resp = await fetch(getApiBase() + '/api/config');
+    if (!resp.ok) return;
+    const c = await resp.json();
+    document.getElementById('cfgTalkerHost').value = c.talker_host || '';
+    document.getElementById('cfgTalkerPort').value = c.talker_port || '';
+    document.getElementById('cfgPredictorHost').value = c.predictor_host || '';
+    document.getElementById('cfgPredictorPort').value = c.predictor_port || '';
+    document.getElementById('cfgVocoderHost').value = c.vocoder_host || '';
+    document.getElementById('cfgVocoderPort').value = c.vocoder_port || '';
+  } catch (e) {
+    console.warn('Failed to load config:', e);
+  }
+}
+
+async function saveConfig() {
+  const ss = document.getElementById('saveStatus');
+  ss.className = 'save-status';
+  ss.textContent = 'Saving...';
+
+  const payload = {
+    talker_host: document.getElementById('cfgTalkerHost').value,
+    talker_port: parseInt(document.getElementById('cfgTalkerPort').value) || 9090,
+    predictor_host: document.getElementById('cfgPredictorHost').value,
+    predictor_port: parseInt(document.getElementById('cfgPredictorPort').value) || 9091,
+    vocoder_host: document.getElementById('cfgVocoderHost').value,
+    vocoder_port: parseInt(document.getElementById('cfgVocoderPort').value) || 9092,
+  };
+
+  try {
+    const resp = await fetch(getApiBase() + '/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      ss.className = 'save-status ok';
+      ss.textContent = '✓ ' + (data.message || 'Saved');
+    } else {
+      ss.className = 'save-status err';
+      ss.textContent = '✗ ' + (data.error || 'Failed');
+    }
+  } catch (e) {
+    ss.className = 'save-status err';
+    ss.textContent = '✗ ' + e.message;
+  }
 }
 
 async function loadVoices() {
@@ -124,7 +195,7 @@ async function loadVoices() {
     const resp = await fetch(VOICES_HF);
     if (!resp.ok) throw new Error('HF API error');
     const files = await resp.json();
-    voices = files
+    const voices = files
       .filter(f => f.path.endsWith('.json'))
       .map(f => {
         const name = f.path.replace('.json', '');
@@ -144,7 +215,6 @@ async function loadVoices() {
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
 
-    // Group by game
     const games = {};
     voices.forEach(v => {
       if (!games[v.game]) games[v.game] = [];
@@ -167,6 +237,16 @@ async function loadVoices() {
   }
 }
 
+async function fetchVoiceData(voiceFile) {
+  if (voiceCache[voiceFile]) return voiceCache[voiceFile];
+  const url = `https://huggingface.co/kautism/qwen3_tts_voices_json/resolve/main/${encodeURIComponent(voiceFile)}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('Failed to download voice: ' + voiceFile);
+  const data = await resp.json();
+  voiceCache[voiceFile] = data;
+  return data;
+}
+
 async function synthesize() {
   const text = document.getElementById('textInput').value.trim();
   if (!text) return;
@@ -186,14 +266,16 @@ async function synthesize() {
   try {
     const base = getApiBase();
     const body = { input: text, model: 'qwen3-tts' };
+
     if (voice && voice !== 'default') {
-      // Download voice JSON from HF and include inline
       status.textContent = 'Loading voice profile...';
-      const vUrl = `https://huggingface.co/kautism/qwen3_tts_voices_json/resolve/main/${voice}`;
-      const vResp = await fetch(vUrl);
-      if (!vResp.ok) throw new Error('Failed to download voice: ' + voice);
-      // Send voice filename — server resolves it
-      body.voice = voice;
+      const vd = await fetchVoiceData(voice);
+      // Filter out @filename ref_text (broken file references)
+      const refText = (vd.ref_text && !vd.ref_text.startsWith('@')) ? vd.ref_text : null;
+      body.voice_data = {
+        codec_tokens: vd.codec_tokens,
+        ref_text: refText,
+      };
     }
     if (lang) body.language = lang;
 
@@ -223,7 +305,6 @@ async function synthesize() {
   }
 }
 
-// Ctrl+Enter to send
 document.getElementById('textInput').addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
@@ -231,7 +312,6 @@ document.getElementById('textInput').addEventListener('keydown', e => {
   }
 });
 
-// Init
 loadVoices();
 </script>
 </body>

@@ -97,6 +97,12 @@ impl Default for ServerConfig {
 
 impl Config {
     pub fn load(path: Option<&str>) -> anyhow::Result<Self> {
+        let (config, _) = Self::load_with_path(path)?;
+        Ok(config)
+    }
+
+    /// Load config and return the path it was loaded from
+    pub fn load_with_path(path: Option<&str>) -> anyhow::Result<(Self, PathBuf)> {
         let candidates = if let Some(p) = path {
             vec![PathBuf::from(p)]
         } else {
@@ -111,13 +117,21 @@ impl Config {
                 let content = std::fs::read_to_string(p)?;
                 let config: Config = toml::from_str(&content)?;
                 tracing::info!("Config loaded from {}", p.display());
-                return Ok(config);
+                return Ok((config, p.clone()));
             }
         }
 
         anyhow::bail!(
             "No config file found. Create qwen3-tts.toml or ~/.config/qwen3-tts/config.toml"
         )
+    }
+
+    /// Save config to the given path
+    pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
+        let content = toml::to_string_pretty(self)?;
+        std::fs::write(path, content)?;
+        tracing::info!("Config saved to {}", path.display());
+        Ok(())
     }
 }
 
