@@ -449,11 +449,15 @@ Tested on 2× RK3588 (4×A76+4×A55) over Gigabit LAN, workers started with `--b
 | + Server-side past_tokens + mem::take() | 185 | 4.79× | −3% |
 | + **Stripped code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
 | + **CPU affinity (`--big-cores`)** | **108** | **3.08×** | **−1%** |
+| + Q4_0 quantization (`--quant q4`) | 93 | ~2.97× | −3% |
 
 Key insight: the full 1.3GB GGUF contains talker weights (1075MB) never used by the predictor.
 Stripping to a 206MB code-predictor-only GGUF eliminates L2 cache pollution → **41% faster prediction**.
 
 The `scripts/extract_code_predictor_gguf.py` tool creates stripped GGUFs from full models.
+
+> **Q4 vs Q8:** Q4 gives ~16% faster prediction (93ms vs 107ms) with comparable quality.
+> Use `--quant q4` on the predictor worker for speed, `--quant q8` (default) for safety.
 
 ## Support the Project
 
