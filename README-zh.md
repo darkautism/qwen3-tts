@@ -449,7 +449,8 @@ Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
 | + 伺服器端 past_tokens + mem::take() | 185 | 4.79× | −3% |
 | + **精簡版 code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
 | + **CPU 親和性 (`--big-cores`)** | **108** | **3.08×** | **−1%** |
-| + Q4_0 量化 (`--quant q4`) | 93 | ~2.97× | −3% |
+| + Q4_0 量化 (`--quant q4`) | 93 | ~2.80× | −3% |
+| + **型別化傳輸協議** (ResponseData enum) | 93 | **2.58×** | **−8%** |
 
 關鍵發現：完整 1.3GB GGUF 包含 1075MB 的 talker 權重，但 predictor 從未使用。
 精簡至 206MB 的 code-predictor 專用 GGUF 消除了 L2 快取污染 → **預測速度提升 41%**。
