@@ -12,6 +12,10 @@ Single binary provides CLI, an OpenAI-compatible HTTP API (with web UI), an MCP 
 
 [中文文檔](README-zh.md)
 
+We have WebUI Now!
+
+![webui](doc/images/webui.jpg)
+
 </div>
 
 ## Architecture
