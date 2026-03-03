@@ -13,6 +13,7 @@ use crate::pipeline::{ChunkMode, Pipeline, SynthesisParams};
 pub struct McpServer {
     pipeline: Arc<Mutex<Pipeline>>,
     config: Config,
+    synthesis_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,8 +37,12 @@ struct JsonRpcResponse {
 }
 
 impl McpServer {
-    pub fn new(pipeline: Arc<Mutex<Pipeline>>, config: Config) -> Self {
-        Self { pipeline, config }
+    pub fn new(pipeline: Arc<Mutex<Pipeline>>, config: Config, synthesis_lock: Arc<Mutex<()>>) -> Self {
+        Self {
+            pipeline,
+            config,
+            synthesis_lock,
+        }
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -234,6 +239,9 @@ impl McpServer {
             chunk_mode,
         };
 
+        tracing::info!("Synthesis request queued (MCP)");
+        let _schedule_guard = self.synthesis_lock.lock().await;
+        tracing::info!("Synthesis request started (MCP)");
         let mut pipeline = self.pipeline.lock().await;
         match pipeline.synthesize(&params).await {
             Ok(result) => {

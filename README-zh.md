@@ -123,19 +123,20 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ### 啟動 Worker (模型自動從 HF Hub 下載)
 
 ```bash
-# IP1 - Talker Worker（在 big.LITTLE SoC 如 RK3588 上使用 --big-cores）
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+# IP1 - Talker Worker（RK3588 會預設自動綁定大核心）
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # IP2 - Predictor Worker（Q4 量化以獲得最快速度）
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 
 # IP2 - Vocoder Worker (可以和 Predictor 同一台)
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
 > 模型預設下載到 `~/.local/share/qwen3-tts/models/{role}/`
 > 自定義 HF repo: `--repo your-name/your-repo`
 > 指定 CPU 核心: `--cores 4-7` 或 `--cores 4,5,6,7`
+> 在 big.LITTLE SoC（RK3588）上，預設已啟用大核心綁定，不需要額外參數。
 
 ### 合成語音
 
@@ -191,13 +192,13 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip 127.0.0.1 --vocoder-ip 127.0
 
 ```bash
 # 終端 1: Talker
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # 終端 2: Predictor
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
 
 # 終端 3: Vocoder
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
 # 終端 4: 合成
 qwen3-tts "你好世界"
@@ -211,11 +212,11 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip <IP2> --vocoder-ip <IP2>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
 # IP1:
 qwen3-tts "你好世界"
@@ -229,13 +230,13 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP3>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
 
 # IP3:
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
 # 任意機器 (含 IP1):
 qwen3-tts "你好世界"
@@ -285,10 +286,10 @@ qwen3-tts "你好世界"
 | `qwen3-tts encode-voice -a ref.wav -r "文字" -o voice.json` | 製作聲音檔 (ARM64 原生) |
 | `qwen3-tts serve --port 8080` | 啟動 OpenAI 相容 API |
 | `qwen3-tts mcp` | 啟動 MCP 伺服器 (stdio) |
-| `qwen3-tts worker -r talker` | 啟動 Talker Worker |
+| `qwen3-tts worker -r talker` | 啟動 Talker Worker（RK3588 預設自動綁定大核心） |
 | `qwen3-tts worker -r predictor` | 啟動 Predictor Worker |
 | `qwen3-tts worker -r vocoder` | 啟動 Vocoder Worker |
-| `qwen3-tts worker -r talker --big-cores` | Worker 固定在大核心上 |
+| `qwen3-tts worker -r talker --big-cores` | 舊版相容參數（現已是預設行為） |
 | `qwen3-tts worker -r talker --cores 4-7` | Worker 固定在指定核心上 |
 | `qwen3-tts init --predictor-ip <IP>` | 產生配置檔 |
 
@@ -446,20 +447,20 @@ Predictor 搭配 `--quant q4` 可額外下載 Q4 模型 (169MB，快 ~16%)。
 
 以下優化按影響力排序，逐步套用可將 RTF 從 4.96× 降至 2.61×：
 
-### 1. 使用 `--big-cores`（big.LITTLE SoC 必備）
+### 1. 自動大核心綁定（big.LITTLE SoC 預設）
 
 ```bash
-# 將所有執行緒綁定到效能核心（如 RK3588 的 A76）
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+# 現在預設會自動綁定到效能核心（如 RK3588 的 A76）
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
 ```
 
-不加此選項，rayon 會將矩陣運算分配到慢速核心 → **慢 ~43%**。
+若沒有大核心綁定，rayon 可能把矩陣運算分配到慢速核心 → **慢 ~43%**。
 
 ### 2. 使用 Q4 量化（`--quant q4`）
 
 ```bash
 # Q4 模型 169MB，比 Q8 的 206MB 更小。預測快 16%，品質相當。
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 ```
 
 指定 `--quant q4` 後會自動從 HuggingFace Hub 下載 Q4 GGUF。
@@ -468,11 +469,11 @@ qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
 
 ```bash
 # 機器 1：只跑 talker（獨享 4 顆大核心）
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # 機器 2：predictor + vocoder（獨享另外 4 顆大核心）
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
 編輯 `qwen3-tts.toml` 指向遠端 worker：
@@ -506,12 +507,12 @@ Cortex-A76 及更新的核心必備。否則量化推理使用較慢的 vmull+vp
 | 優化 | MEDIUM RTF | 加速 |
 |------|-----------|------|
 | 預設（無優化） | 4.96× | 基準 |
-| + `--big-cores` + Q4 + SDOT | 2.87× | **快 42%** |
+| + 自動大核心綁定 + Q4 + SDOT | 2.87× | **快 42%** |
 | + 雙機分散部署 | **2.61×** | **快 47%** |
 
 ## 效能
 
-於 RK3588 (4×A76 + 4×A55) 測試，使用 `--big-cores --quant q4` 啟動 Worker：
+於 RK3588 (4×A76 + 4×A55) 測試，使用預設自動大核心綁定 + `--quant q4`：
 
 ### 單機 vs 雙機
 
@@ -536,8 +537,8 @@ Cortex-A76 及更新的核心必備。否則量化推理使用較慢的 vmull+vp
 
 > RTF = 生成時間 / 音訊時間。越低越好，RTF < 1 為即時。
 >
-> **重要：** 在 big.LITTLE SoC（如 RK3588）上，務必使用 `--big-cores` 啟動 worker。
-> 否則 rayon 會將矩陣運算分配到慢速 A55 核心，predictor 從 93ms 退化到 190ms。
+> **重要：** 在 big.LITTLE SoC（如 RK3588）上，現在預設已啟用大核心綁定。
+> 如需手動覆蓋，請使用 `--cores`；否則 predictor 可能從 93ms 退化到 ~190ms。
 
 ### 優化歷程
 
@@ -546,7 +547,7 @@ Cortex-A76 及更新的核心必備。否則量化推理使用較慢的 vmull+vp
 | 基準 (Candle Q8_0, 完整 1.3GB GGUF) | 185 | 4.96× | — |
 | + 伺服器端 past_tokens + mem::take() | 185 | 4.79× | −3% |
 | + **精簡版 code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
-| + **CPU 親和性 (`--big-cores`)** | **108** | **3.08×** | **−1%** |
+| + **CPU 親和性（自動大核心綁定）** | **108** | **3.08×** | **−1%** |
 | + Q4_0 量化 (`--quant q4`) | 93 | ~2.80× | −3% |
 | + **型別化傳輸協議** (ResponseData enum) | 93 | **2.58×** | **−8%** |
 

@@ -211,7 +211,7 @@ impl Pipeline {
 
         let mut all_audio: Vec<i16> = Vec::new();
         let mut total_tokens = 0usize;
-        let mut vocode_pending = false;
+        let mut pending_vocode = 0usize;
 
         for (i, chunk_text) in chunks.iter().enumerate() {
             let preview: String = chunk_text.chars().take(30).collect();
@@ -219,7 +219,7 @@ impl Pipeline {
 
             // Phase 1: TokenizeAndEmbed
             let ref_codec = if has_voice {
-                Some("__loaded__".to_string())
+                Some(RefCodecTokens::Loaded)
             } else {
                 None
             };
@@ -232,7 +232,7 @@ impl Pipeline {
                 })
                 .await?;
 
-            let (prefix_b64, _n_prefix, expected_tokens) = match tok_resp.data {
+            let (prefix_bytes, _n_prefix, expected_tokens) = match tok_resp.data {
                 ResponseData::TokenizeAndEmbed {
                     prefix_embeddings,
                     n_prefix,
@@ -251,7 +251,7 @@ impl Pipeline {
             // Phase 2: TalkerPrefill
             self.talker
                 .call(&Request::TalkerPrefill {
-                    prefix_embeddings: prefix_b64,
+                    prefix_embeddings: prefix_bytes,
                 })
                 .await?;
 
@@ -263,7 +263,7 @@ impl Pipeline {
             let eos_max_boost: f32 = d.eos_max_boost;
 
             let mut codes: Vec<Vec<i64>> = Vec::new();
-            let mut feedback_b64 = encode_f32(&[0.0f32; HIDDEN_SIZE]);
+            let mut feedback_bytes = encode_f32(&[0.0f32; HIDDEN_SIZE]);
             let mut first_step = true;
 
             for step in 0..params.max_tokens {
@@ -282,9 +282,9 @@ impl Pipeline {
                 };
 
                 let fb = if first_step {
-                    "__first__".to_string()
+                    None
                 } else {
-                    std::mem::take(&mut feedback_b64)
+                    Some(std::mem::take(&mut feedback_bytes))
                 };
                 let talker_resp = self
                     .talker
@@ -297,7 +297,7 @@ impl Pipeline {
                     .await?;
                 first_step = false;
 
-                let (hidden_b64, code_0, is_eos) = match talker_resp.data {
+                let (hidden_bytes, code_0, is_eos) = match talker_resp.data {
                     ResponseData::TalkerStep {
                         hidden_state,
                         code_0,
@@ -314,7 +314,7 @@ impl Pipeline {
                 let cp_resp = self
                     .predictor
                     .call(&Request::CodePredict {
-                        hidden_state: hidden_b64,
+                        hidden_state: hidden_bytes,
                         code_0,
                         temperature: params.cp_temperature,
                     })
@@ -328,7 +328,7 @@ impl Pipeline {
                     _ => anyhow::bail!("Unexpected response from code_predict"),
                 };
 
-                feedback_b64 = fb;
+                feedback_bytes = fb;
                 let mut token = Vec::with_capacity(16);
                 token.push(code_0 as i64);
                 token.extend_from_slice(&codes_1_15);
@@ -343,17 +343,7 @@ impl Pipeline {
                 continue;
             }
 
-            // Collect previous vocode result (ran in parallel with generation above!)
-            if vocode_pending {
-                let resp = self.vocoder.read_response().await?;
-                let audio_b64 = match &resp.data {
-                    ResponseData::Vocode { audio, .. } => audio,
-                    _ => anyhow::bail!("Unexpected vocoder response"),
-                };
-                all_audio.extend_from_slice(&decode_i16(audio_b64)?);
-            }
-
-            // Send this chunk to vocoder (non-blocking — overlaps with next chunk's generation)
+            // Queue this chunk to vocoder first, then drain if queue depth exceeds 1.
             let flat: Vec<i64> = codes.iter().flatten().copied().collect();
             self.vocoder
                 .send_request(&Request::Vocode {
@@ -361,17 +351,29 @@ impl Pipeline {
                     n_tokens: n_chunk_tokens,
                 })
                 .await?;
-            vocode_pending = true;
+            pending_vocode += 1;
+
+            // Keep one vocoder request in flight while next chunk is being generated.
+            if pending_vocode > 1 {
+                let resp = self.vocoder.read_response().await?;
+                let audio_bytes = match &resp.data {
+                    ResponseData::Vocode { audio, .. } => audio,
+                    _ => anyhow::bail!("Unexpected vocoder response"),
+                };
+                all_audio.extend_from_slice(&decode_i16(audio_bytes)?);
+                pending_vocode -= 1;
+            }
         }
 
-        // Collect final vocode
-        if vocode_pending {
+        // Collect remaining vocoder responses in order.
+        while pending_vocode > 0 {
             let resp = self.vocoder.read_response().await?;
-            let audio_b64 = match &resp.data {
+            let audio_bytes = match &resp.data {
                 ResponseData::Vocode { audio, .. } => audio,
                 _ => anyhow::bail!("Unexpected vocoder response"),
             };
-            all_audio.extend_from_slice(&decode_i16(audio_b64)?);
+            all_audio.extend_from_slice(&decode_i16(audio_bytes)?);
+            pending_vocode -= 1;
         }
 
         if all_audio.is_empty() {
@@ -406,11 +408,11 @@ impl Pipeline {
         let ref_tokens = if let Some(ref vd) = params.voice_data {
             // Inline voice data (from web UI)
             let flat: Vec<i64> = vd.codec_tokens.iter().flatten().copied().collect();
-            let tokens_b64 = encode_i64(&flat);
+            let tokens_bytes = encode_i64(&flat);
             let n_tokens = vd.codec_tokens.len();
             self.talker
                 .call(&Request::LoadVoice {
-                    codec_tokens: tokens_b64,
+                    codec_tokens: tokens_bytes,
                     n_tokens,
                     ref_text: vd.ref_text.clone(),
                 })
@@ -419,17 +421,17 @@ impl Pipeline {
                 .call(&Request::TokenizeAndEmbed {
                     text: params.text.clone(),
                     language: params.language.clone(),
-                    ref_codec_tokens: Some("__loaded__".into()),
+                    ref_codec_tokens: Some(RefCodecTokens::Loaded),
                 })
                 .await?
         } else if let Some(ref voice) = params.voice {
             // Read voice file locally and send data to worker
             let (codec_tokens_i64, ref_text) = crate::voice_loader::load_voice_file(voice)?;
-            let tokens_b64 = encode_i64(&codec_tokens_i64);
+            let tokens_bytes = encode_i64(&codec_tokens_i64);
             let n_tokens = codec_tokens_i64.len() / 16;
             self.talker
                 .call(&Request::LoadVoice {
-                    codec_tokens: tokens_b64,
+                    codec_tokens: tokens_bytes,
                     n_tokens,
                     ref_text,
                 })
@@ -439,7 +441,7 @@ impl Pipeline {
                 .call(&Request::TokenizeAndEmbed {
                     text: params.text.clone(),
                     language: params.language.clone(),
-                    ref_codec_tokens: Some("__loaded__".into()),
+                    ref_codec_tokens: Some(RefCodecTokens::Loaded),
                 })
                 .await?
         } else {
@@ -452,7 +454,7 @@ impl Pipeline {
                 .await?
         };
 
-        let (prefix_b64, n_prefix, expected_tokens) = match ref_tokens.data {
+        let (prefix_bytes, n_prefix, expected_tokens) = match ref_tokens.data {
             ResponseData::TokenizeAndEmbed {
                 prefix_embeddings,
                 n_prefix,
@@ -478,7 +480,7 @@ impl Pipeline {
         info!("Prefilling talker...");
         self.talker
             .call(&Request::TalkerPrefill {
-                prefix_embeddings: prefix_b64,
+                prefix_embeddings: prefix_bytes,
             })
             .await?;
 
@@ -491,7 +493,7 @@ impl Pipeline {
         let eos_max_boost: f32 = d.eos_max_boost;
 
         let mut all_codes: Vec<Vec<i64>> = Vec::with_capacity(params.max_tokens);
-        let mut feedback_b64 = encode_f32(&[0.0f32; HIDDEN_SIZE]);
+        let mut feedback_bytes = encode_f32(&[0.0f32; HIDDEN_SIZE]);
         let mut first_step = true;
         let vocode_chunk_size = 64usize;
         let mut vocode_batches_sent = 0usize;
@@ -515,9 +517,9 @@ impl Pipeline {
             // Talker step → hidden_state + code_0
             let t0 = std::time::Instant::now();
             let fb = if first_step {
-                "__first__".to_string()
+                None
             } else {
-                std::mem::take(&mut feedback_b64)
+                Some(std::mem::take(&mut feedback_bytes))
             };
             let talker_resp = self
                 .talker
@@ -532,7 +534,7 @@ impl Pipeline {
 
             first_step = false;
 
-            let (hidden_b64, code_0, is_eos) = match talker_resp.data {
+            let (hidden_bytes, code_0, is_eos) = match talker_resp.data {
                 ResponseData::TalkerStep {
                     hidden_state,
                     code_0,
@@ -558,7 +560,7 @@ impl Pipeline {
             let cp_resp = self
                 .predictor
                 .call(&Request::CodePredict {
-                    hidden_state: hidden_b64,
+                    hidden_state: hidden_bytes,
                     code_0,
                     temperature: params.cp_temperature,
                 })
@@ -573,7 +575,7 @@ impl Pipeline {
                 _ => anyhow::bail!("Unexpected response from code_predict"),
             };
 
-            feedback_b64 = fb;
+            feedback_bytes = fb;
 
             // Collect full 16-group code token
             token_codes.clear();
@@ -638,42 +640,36 @@ impl Pipeline {
         );
         let mut all_audio_i16: Vec<i16> = Vec::new();
 
-        // Collect responses from batches sent during generation
-        for batch_idx in 0..vocode_batches_sent {
+        // Queue remaining tail first so it can run while earlier batch responses are draining.
+        let sent_tokens = vocode_batches_sent * vocode_chunk_size;
+        let mut pending_batches = vocode_batches_sent;
+        if sent_tokens < n_tokens {
+            let remaining_codes: Vec<i64> = all_codes[sent_tokens..].iter().flatten().copied().collect();
+            let remaining_n = n_tokens - sent_tokens;
+            debug!("Vocoder: queue remaining {} tokens", remaining_n);
+            self.vocoder
+                .send_request(&Request::Vocode {
+                    codes: encode_i64(&remaining_codes),
+                    n_tokens: remaining_n,
+                })
+                .await?;
+            pending_batches += 1;
+        }
+
+        // Collect responses in submission order.
+        for batch_idx in 0..pending_batches {
             let voc_resp = self.vocoder.read_response().await?;
-            let audio_b64 = match &voc_resp.data {
+            let audio_bytes = match &voc_resp.data {
                 ResponseData::Vocode { audio, .. } => audio,
                 _ => anyhow::bail!("Unexpected response from vocoder batch"),
             };
-            let batch_audio = decode_i16(audio_b64)?;
+            let batch_audio = decode_i16(audio_bytes)?;
             debug!(
                 "Vocoder batch {} received: {} samples",
                 batch_idx,
                 batch_audio.len()
             );
             all_audio_i16.extend_from_slice(&batch_audio);
-        }
-
-        // Send remaining tokens that didn't fill a full batch
-        let sent_tokens = vocode_batches_sent * vocode_chunk_size;
-        if sent_tokens < n_tokens {
-            let remaining_codes: Vec<i64> =
-                all_codes[sent_tokens..].iter().flatten().copied().collect();
-            let remaining_n = n_tokens - sent_tokens;
-            debug!("Vocoder: sending remaining {} tokens", remaining_n);
-            let voc_resp = self
-                .vocoder
-                .call(&Request::Vocode {
-                    codes: encode_i64(&remaining_codes),
-                    n_tokens: remaining_n,
-                })
-                .await?;
-            let audio_b64 = match &voc_resp.data {
-                ResponseData::Vocode { audio, .. } => audio,
-                _ => anyhow::bail!("Unexpected response from vocoder"),
-            };
-            let remaining_audio = decode_i16(audio_b64)?;
-            all_audio_i16.extend_from_slice(&remaining_audio);
         }
 
         let audio_i16 = all_audio_i16;

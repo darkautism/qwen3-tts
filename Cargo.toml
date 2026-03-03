@@ -42,9 +42,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Config
 toml = "0.8"
 
-# Base64 for binary in msgpack
-base64 = "0.22"
-
 # UUID for request IDs
 uuid = { version = "1", features = ["v4"] }
 

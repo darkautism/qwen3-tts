@@ -125,19 +125,20 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ### Start Workers (models auto-download from HF Hub)
 
 ```bash
-# IP1 - Talker Worker (use --big-cores on big.LITTLE SoCs like RK3588)
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+# IP1 - Talker Worker (big-core pinning is automatic on RK3588)
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # IP2 - Predictor Worker (Q4 quantization for max speed)
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 
 # IP2 - Vocoder Worker (can share machine with Predictor)
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
 > Models download to `~/.local/share/qwen3-tts/models/{role}/` by default.
 > Custom HF repo: `--repo your-name/your-repo`
 > For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
+> On big.LITTLE SoCs (RK3588), big-core pinning is enabled by default (no extra flag required).
 
 ### Synthesize Speech
 
@@ -193,13 +194,13 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip 127.0.0.1 --vocoder-ip 127.0
 
 ```bash
 # Terminal 1: Talker
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # Terminal 2: Predictor
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
 
 # Terminal 3: Vocoder
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
 # Terminal 4: Synthesize
 qwen3-tts "你好世界"
@@ -211,11 +212,11 @@ qwen3-tts init --talker-ip 127.0.0.1 --predictor-ip <IP2> --vocoder-ip <IP2>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
 # IP1:
 qwen3-tts "你好世界"
@@ -229,13 +230,13 @@ qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP3>
 
 ```bash
 # IP1:
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # IP2:
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
 
 # IP3:
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 
 # Any machine (including IP1):
 qwen3-tts "你好世界"
@@ -285,10 +286,10 @@ qwen3-tts "你好世界"
 | `qwen3-tts encode-voice -a ref.wav -r "text" -o voice.json` | Create voice profile (native ARM64) |
 | `qwen3-tts serve --port 8080` | Start OpenAI-compatible API server |
 | `qwen3-tts mcp` | Start MCP server (stdio) |
-| `qwen3-tts worker -r talker` | Start Talker Worker |
+| `qwen3-tts worker -r talker` | Start Talker Worker (auto big-core pinning on RK3588) |
 | `qwen3-tts worker -r predictor` | Start Predictor Worker |
 | `qwen3-tts worker -r vocoder` | Start Vocoder Worker |
-| `qwen3-tts worker -r talker --big-cores` | Worker pinned to big CPU cores |
+| `qwen3-tts worker -r talker --big-cores` | Legacy alias (now default behavior) |
 | `qwen3-tts worker -r talker --cores 4-7` | Worker pinned to specific cores |
 | `qwen3-tts init --predictor-ip <IP>` | Generate config file |
 
@@ -446,20 +447,20 @@ Chinese · English · Deutsch · Русский · Français · 日本語 · 한
 
 To achieve the best RTF on ARM SBCs, apply these optimizations (in order of impact):
 
-### 1. Use `--big-cores` (essential on big.LITTLE SoCs)
+### 1. Automatic big-core pinning (default on big.LITTLE SoCs)
 
 ```bash
-# Pins all threads to performance cores (e.g., A76 on RK3588)
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores
+# Default now auto-pins to performance cores (e.g., A76 on RK3588)
+qwen3-tts worker -r predictor -b 0.0.0.0:9091
 ```
 
-Without this, rayon distributes matmul work to slow efficiency cores → **~43% slower**.
+Without big-core pinning, rayon may distribute matmul work to slow efficiency cores → **~43% slower**.
 
 ### 2. Use Q4 quantization (`--quant q4`)
 
 ```bash
 # Q4 model is 169MB vs 206MB for Q8. 16% faster prediction, comparable quality.
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 ```
 
 The Q4 GGUF is auto-downloaded from HuggingFace Hub when `--quant q4` is specified.
@@ -468,11 +469,11 @@ The Q4 GGUF is auto-downloaded from HuggingFace Hub when `--quant q4` is specifi
 
 ```bash
 # Machine 1: talker only (gets all 4 big cores to itself)
-qwen3-tts worker -r talker -b 0.0.0.0:9090 --big-cores
+qwen3-tts worker -r talker -b 0.0.0.0:9090
 
 # Machine 2: predictor + vocoder (their own 4 big cores)
-qwen3-tts worker -r predictor -b 0.0.0.0:9091 --big-cores --quant q4
-qwen3-tts worker -r vocoder -b 0.0.0.0:9092 --big-cores
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
+qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
 Edit `qwen3-tts.toml` to point to remote workers:
@@ -501,15 +502,17 @@ RUSTFLAGS='-C target-feature=+dotprod' cargo build --release
 
 This is critical on Cortex-A76 and newer cores. Without it, quantized inference uses a slower vmull+vpaddl path.
 
-### Summary: Cumulative Effect| What | MEDIUM RTF | Speedup |
+### Summary: Cumulative Effect
+
+| What | MEDIUM RTF | Speedup |
 |------|-----------|---------|
 | Default (no optimization) | 4.96× | baseline |
-| + `--big-cores` + Q4 + SDOT | 2.87× | **42% faster** |
+| + auto big-core pinning + Q4 + SDOT | 2.87× | **42% faster** |
 | + distribute to 2 machines | **2.61×** | **47% faster** |
 
 ## Performance
 
-Tested on RK3588 (4×A76 + 4×A55), workers started with `--big-cores --quant q4`:
+Tested on RK3588 (4×A76 + 4×A55), workers started with auto big-core pinning + `--quant q4`:
 
 ### Single Machine vs Two Machines
 
@@ -534,8 +537,8 @@ Single-machine works well for simple deployments; adding a second board reduces 
 
 > RTF = generation time / audio duration. Lower is better; RTF < 1 is real-time.
 >
-> **Important:** On big.LITTLE SoCs (e.g., RK3588), always start workers with `--big-cores` to avoid slow small cores.
-> Without it, rayon distributes matmul to slow A55 cores → predictor degrades from 93ms to 190ms.
+> **Important:** On big.LITTLE SoCs (e.g., RK3588), big-core pinning is now enabled by default.
+> If you need manual override, use `--cores`; otherwise predictor may degrade from 93ms to ~190ms on A55 cores.
 
 ### Optimization Journey
 
@@ -544,7 +547,7 @@ Single-machine works well for simple deployments; adding a second board reduces 
 | Baseline (Candle Q8_0, full 1.3GB GGUF) | 185 | 4.96× | — |
 | + Server-side past_tokens + mem::take() | 185 | 4.79× | −3% |
 | + **Stripped code-predictor GGUF (206MB)** | **108** | **3.12×** | **−37%** |
-| + **CPU affinity (`--big-cores`)** | **108** | **3.08×** | **−1%** |
+| + **CPU affinity (auto big-core pinning)** | **108** | **3.08×** | **−1%** |
 | + Q4_0 quantization (`--quant q4`) | 93 | ~2.80× | −3% |
 | + **Typed wire protocol** (ResponseData enum) | 93 | **2.58×** | **−8%** |
 

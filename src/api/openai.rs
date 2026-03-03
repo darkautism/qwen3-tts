@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
+use tracing::info;
 
 use crate::config::Config;
 use crate::pipeline::{ChunkMode, InlineVoiceData, Pipeline, SynthesisParams};
@@ -17,9 +18,9 @@ use crate::pipeline::{ChunkMode, InlineVoiceData, Pipeline, SynthesisParams};
 static INDEX_HTML: &str = include_str!("static/index.html");
 
 pub struct AppState {
-    pub pipeline: Arc<Mutex<Pipeline>>,
     pub config: Mutex<Config>,
     pub config_path: PathBuf,
+    pub synthesis_lock: Arc<Mutex<()>>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -79,6 +80,11 @@ async fn create_speech(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateSpeechRequest>,
 ) -> impl IntoResponse {
+    info!("Synthesis request queued (API/UI)");
+    // Global scheduler: serialize synthesis across API/UI/MCP initiators.
+    let _schedule_guard = state.synthesis_lock.lock().await;
+    info!("Synthesis request started (API/UI)");
+
     let config = state.config.lock().await.clone();
     let language = req
         .language
@@ -129,7 +135,19 @@ async fn create_speech(
         chunk_mode,
     };
 
-    let mut pipeline = state.pipeline.lock().await;
+    let mut pipeline = match Pipeline::new(config).await {
+        Ok(p) => p,
+        Err(e) => {
+            let body = serde_json::json!({
+                "error": {
+                    "message": format!("Failed to connect workers: {}", e),
+                    "type": "server_error",
+                }
+            });
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response();
+        }
+    };
+
     match pipeline.synthesize(&params).await {
         Ok(result) => {
             let audio_duration = result.audio_samples.len() as f32 / result.sample_rate as f32;
@@ -248,13 +266,12 @@ async fn update_config(
         }
     }
 
-    // Reconnect pipeline with new config
+    // Validate new config by reconnecting workers once
     let new_config = state.config.lock().await.clone();
     match Pipeline::new(new_config).await {
-        Ok(new_pipeline) => {
-            let mut pipeline = state.pipeline.lock().await;
-            *pipeline = new_pipeline;
-            let body = serde_json::json!({"status": "ok", "message": "Config saved and workers reconnected"});
+        Ok(_) => {
+            let body =
+                serde_json::json!({"status": "ok", "message": "Config saved and workers reconnected"});
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(e) => {

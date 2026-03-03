@@ -72,7 +72,7 @@ pub enum Commands {
         #[arg(long)]
         cores: Option<String>,
 
-        /// Auto-detect and pin to big (A76) CPU cores (RK3588)
+        /// Legacy flag: big-core pinning is now automatic by default
         #[arg(long)]
         big_cores: bool,
 

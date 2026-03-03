@@ -11,15 +11,17 @@ pub mod talker_llamacpp;
 pub mod vocoder;
 
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ndarray::{Array1, Array2};
 use ndarray_npy::read_npy;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use crate::protocol::{Request, Response, ResponseData, HIDDEN_SIZE};
+use crate::protocol::{RefCodecTokens, Request, Response, ResponseData, HIDDEN_SIZE};
 
 pub struct Worker {
     state: WorkerState,
@@ -44,6 +46,7 @@ struct TalkerState {
     ref_codec_tokens: Option<Array2<i64>>,
     ref_text: Option<String>,
     past_tokens: Vec<i32>,
+    feedback_decode_buf: Vec<f32>,
 }
 
 struct PredictorState {
@@ -51,6 +54,7 @@ struct PredictorState {
     codec_embedding: Array2<f32>,
     tts_pad_embed: Array1<f32>,
     feedback_buf: Array1<f32>,
+    hidden_decode_buf: Vec<f32>,
 }
 
 /// Abstraction over Candle, GGML, or ONNX code predictor
@@ -64,16 +68,23 @@ enum PredictorBackend {
 impl PredictorBackend {
     fn predict(
         &mut self,
-        hidden: &Array1<f32>,
+        hidden: &[f32],
         _code_0: i32,
-        code_0_embed: &Array1<f32>,
+        code_0_embed: &[f32],
         temperature: f32,
     ) -> Result<Vec<i32>> {
         match self {
             PredictorBackend::Candle(cp) => cp.predict(hidden, code_0_embed, temperature),
             #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
-            PredictorBackend::Ggml(cp) => cp.predict(hidden, _code_0, temperature),
-            PredictorBackend::Onnx(cp) => cp.predict(hidden, code_0_embed, temperature),
+            PredictorBackend::Ggml(cp) => {
+                let hidden_arr = Array1::from_vec(hidden.to_vec());
+                cp.predict(&hidden_arr, _code_0, temperature)
+            }
+            PredictorBackend::Onnx(cp) => {
+                let hidden_arr = Array1::from_vec(hidden.to_vec());
+                let code_0_embed_arr = Array1::from_vec(code_0_embed.to_vec());
+                cp.predict(&hidden_arr, &code_0_embed_arr, temperature)
+            }
         }
     }
 
@@ -128,6 +139,7 @@ impl Worker {
                     ref_codec_tokens: None,
                     ref_text: None,
                     past_tokens: Vec::new(),
+                    feedback_decode_buf: Vec::with_capacity(HIDDEN_SIZE),
                 })
             }
             "predictor" => {
@@ -185,6 +197,7 @@ impl Worker {
                     codec_embedding,
                     feedback_buf: tts_pad_embed.clone(),
                     tts_pad_embed,
+                    hidden_decode_buf: Vec::with_capacity(HIDDEN_SIZE),
                 })
             }
             "vocoder" => {
@@ -225,7 +238,7 @@ impl Worker {
                 text,
                 language,
                 ref_codec_tokens,
-            } => self.handle_tokenize_embed(&text, &language, ref_codec_tokens.as_deref()),
+            } => self.handle_tokenize_embed(&text, &language, ref_codec_tokens.as_ref()),
             Request::TalkerPrefill { prefix_embeddings } => {
                 self.handle_talker_prefill(&prefix_embeddings)
             }
@@ -235,7 +248,7 @@ impl Worker {
                 repetition_penalty,
                 eos_boost,
             } => self.handle_talker_step(
-                &feedback_embedding,
+                feedback_embedding.as_deref(),
                 temperature,
                 repetition_penalty,
                 eos_boost,
@@ -260,7 +273,7 @@ impl Worker {
         &mut self,
         text: &str,
         language: &str,
-        ref_tokens: Option<&str>,
+        ref_tokens: Option<&RefCodecTokens>,
     ) -> Result<Response> {
         let ts = self.talker_state()?;
 
@@ -272,52 +285,55 @@ impl Worker {
         let target_ids: Vec<usize> = encoding.get_ids().iter().map(|&id| id as usize).collect();
         info!("Tokenized {} → {} tokens", text.len(), target_ids.len());
 
-        let prefix = if let Some(ref_str) = ref_tokens {
-            if ref_str == "__loaded__" {
-                let ref_toks = ts
-                    .ref_codec_tokens
-                    .as_ref()
-                    .context("No voice reference loaded")?;
-                // Prepend ref_text tokens for ICL if available
-                let all_ids = if let Some(ref ref_text) = ts.ref_text {
-                    let ref_enc = ts
-                        .tokenizer
-                        .encode(ref_text.as_str(), false)
-                        .map_err(|e| anyhow::anyhow!("Tokenize ref_text: {}", e))?;
-                    let ref_ids: Vec<usize> =
-                        ref_enc.get_ids().iter().map(|&id| id as usize).collect();
-                    info!("Prepending ref_text ({} tokens) for ICL", ref_ids.len());
-                    let mut combined = ref_ids;
-                    combined.extend_from_slice(&target_ids);
-                    combined
-                } else {
-                    target_ids.clone()
-                };
-                ts.embedder
-                    .build_prefix_with_ref(&all_ids, ref_toks, language)
-            } else {
-                let ref_toks = decode_i64_array2(ref_str, 16)?;
-                ts.embedder
-                    .build_prefix_with_ref(&target_ids, &ref_toks, language)
+        let prefix = if let Some(ref_input) = ref_tokens {
+            match ref_input {
+                RefCodecTokens::Loaded => {
+                    let ref_toks = ts
+                        .ref_codec_tokens
+                        .as_ref()
+                        .context("No voice reference loaded")?;
+                    // Prepend ref_text tokens for ICL if available
+                    let all_ids = if let Some(ref ref_text) = ts.ref_text {
+                        let ref_enc = ts
+                            .tokenizer
+                            .encode(ref_text.as_str(), false)
+                            .map_err(|e| anyhow::anyhow!("Tokenize ref_text: {}", e))?;
+                        let ref_ids: Vec<usize> =
+                            ref_enc.get_ids().iter().map(|&id| id as usize).collect();
+                        info!("Prepending ref_text ({} tokens) for ICL", ref_ids.len());
+                        let mut combined = ref_ids;
+                        combined.extend_from_slice(&target_ids);
+                        combined
+                    } else {
+                        target_ids.clone()
+                    };
+                    ts.embedder
+                        .build_prefix_with_ref(&all_ids, ref_toks, language)
+                }
+                RefCodecTokens::Inline(raw) => {
+                    let ref_toks = decode_i64_array2_bytes(raw, 16)?;
+                    ts.embedder
+                        .build_prefix_with_ref(&target_ids, &ref_toks, language)
+                }
             }
         } else {
             ts.embedder.build_prefix(&target_ids, language)
         };
 
         let n_prefix = prefix.nrows();
-        let prefix_b64 = encode_f32_slice(prefix.as_slice().unwrap());
+        let prefix_bytes = encode_f32_slice(prefix.as_slice().unwrap());
         let expected = estimate_tokens(text, language);
 
         ok(ResponseData::TokenizeAndEmbed {
-            prefix_embeddings: prefix_b64,
+            prefix_embeddings: prefix_bytes,
             n_prefix,
             expected_output_tokens: expected,
         })
     }
 
-    fn handle_talker_prefill(&mut self, prefix_b64: &str) -> Result<Response> {
+    fn handle_talker_prefill(&mut self, prefix_bytes: &[u8]) -> Result<Response> {
         let ts = self.talker_state()?;
-        let prefix_flat = decode_f32_vec(prefix_b64)?;
+        let prefix_flat = decode_f32_vec(prefix_bytes)?;
         let n_tokens = prefix_flat.len() / HIDDEN_SIZE;
         info!("Prefilling {} tokens", n_tokens);
 
@@ -331,21 +347,21 @@ impl Worker {
 
     fn handle_talker_step(
         &mut self,
-        feedback_b64: &str,
+        feedback_bytes: Option<&[u8]>,
         temperature: f32,
         repetition_penalty: f32,
         eos_boost: f32,
     ) -> Result<Response> {
         let ts = self.talker_state()?;
 
-        let hidden = if feedback_b64 == "__first__" {
+        let hidden = if feedback_bytes.is_none() {
             ts.past_tokens.clear();
             ts.last_hidden
                 .clone()
                 .context("No hidden state from prefill")?
         } else {
-            let feedback = decode_f32_vec(feedback_b64)?;
-            ts.talker.get_hidden(&feedback, 1, true)?
+            decode_f32_into(feedback_bytes.unwrap(), &mut ts.feedback_decode_buf)?;
+            ts.talker.get_hidden(&ts.feedback_decode_buf, 1, true)?
         };
 
         let past = if ts.past_tokens.is_empty() {
@@ -358,7 +374,7 @@ impl Worker {
                 .sample_token(&hidden, temperature, past, repetition_penalty, eos_boost);
 
         let is_eos = code_0 == 2150 || code_0 >= 2048;
-        let hidden_b64 = encode_f32_slice(hidden.as_slice().unwrap());
+        let hidden_bytes = encode_f32_slice(hidden.as_slice().unwrap());
 
         // Track past tokens for repetition penalty
         ts.past_tokens.push(code_0);
@@ -366,7 +382,7 @@ impl Worker {
         ts.last_hidden = Some(hidden);
 
         ok(ResponseData::TalkerStep {
-            hidden_state: hidden_b64,
+            hidden_state: hidden_bytes,
             code_0,
             is_eos,
         })
@@ -374,12 +390,12 @@ impl Worker {
 
     fn handle_load_voice(
         &mut self,
-        codec_tokens_b64: &str,
+        codec_tokens_bytes: &[u8],
         n_tokens: usize,
         ref_text: Option<String>,
     ) -> Result<Response> {
         let ts = self.talker_state()?;
-        let flat = decode_i64_vec(codec_tokens_b64)?;
+        let flat = decode_i64_vec(codec_tokens_bytes)?;
         let ref_tokens = Array2::from_shape_vec((n_tokens, 16), flat)
             .context("Shape mismatch in codec_tokens")?;
         info!("Loaded voice: {} tokens", ref_tokens.nrows());
@@ -392,19 +408,22 @@ impl Worker {
 
     fn handle_code_predict(
         &mut self,
-        hidden_b64: &str,
+        hidden_bytes: &[u8],
         code_0: i32,
         temperature: f32,
     ) -> Result<Response> {
         let ps = self.predictor_state()?;
 
-        let hidden = Array1::from_vec(decode_f32_vec(hidden_b64)?);
-        let code_0_embed = ps.codec_embedding.row(code_0 as usize).to_owned();
+        decode_f32_into(hidden_bytes, &mut ps.hidden_decode_buf)?;
+        let code_0_embed = ps.codec_embedding.row(code_0 as usize);
+        let code_0_embed_slice = code_0_embed
+            .as_slice()
+            .context("codec_embedding row is not contiguous")?;
 
         let t0 = std::time::Instant::now();
         let predicted = ps
             .code_predictor
-            .predict(&hidden, code_0, &code_0_embed, temperature)?;
+            .predict(&ps.hidden_decode_buf, code_0, code_0_embed_slice, temperature)?;
         let pred_ms = t0.elapsed().as_millis();
 
         // Feedback = tts_pad + talker_codec_embed[code_0] + sum(cp_codec_embed[gi][code_i] for i=1..15)
@@ -416,22 +435,21 @@ impl Worker {
         debug!("code_predict: {}ms (code_0={})", pred_ms, code_0);
 
         let codes_json: Vec<i64> = predicted.iter().map(|&c| c as i64).collect();
-        let feedback_b64 = encode_f32_slice(ps.feedback_buf.as_slice().unwrap());
+        let feedback_bytes = encode_f32_slice(ps.feedback_buf.as_slice().unwrap());
 
         ok(ResponseData::CodePredict {
             codes: codes_json,
-            feedback_embedding: feedback_b64,
+            feedback_embedding: feedback_bytes,
         })
     }
 
-    fn handle_vocode(&mut self, codes_b64: &str, n_tokens: usize) -> Result<Response> {
+    fn handle_vocode(&mut self, codes_bytes: &[u8], n_tokens: usize) -> Result<Response> {
         let voc = match &mut self.state {
             WorkerState::Vocoder(vs) => &mut vs.vocoder,
             _ => anyhow::bail!("This worker does not have a vocoder"),
         };
 
-        let bytes = B64.decode(codes_b64)?;
-        let codes: Vec<i64> = bytes
+        let codes: Vec<i64> = codes_bytes
             .chunks_exact(8)
             .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
             .collect();
@@ -444,10 +462,9 @@ impl Worker {
             .map(|&s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
             .collect();
         let audio_bytes: Vec<u8> = audio_i16.iter().flat_map(|s| s.to_le_bytes()).collect();
-        let audio_b64 = B64.encode(&audio_bytes);
 
         ok(ResponseData::Vocode {
-            audio: audio_b64,
+            audio: audio_bytes,
             n_samples: audio_i16.len(),
         })
     }
@@ -473,78 +490,145 @@ impl Worker {
 
 pub async fn run_worker(bind: &str, role: &str, models_dir: &str) -> Result<()> {
     info!("Initializing {} worker (models: {})...", role, models_dir);
-    let mut worker = Worker::new(role, Path::new(models_dir))?;
+    let worker = Worker::new(role, Path::new(models_dir))?;
     info!("Worker ready, listening on {}", bind);
 
     let listener = TcpListener::bind(bind).await?;
 
-    loop {
-        let (mut stream, addr) = listener.accept().await?;
-        info!("Client connected: {}", addr);
-        let _ = stream.set_nodelay(true);
-
+    if role == "talker" {
+        // Talker keeps per-connection autoregressive state; keep single active client for correctness.
+        let mut worker = worker;
         loop {
-            // Read length prefix
-            let mut len_buf = [0u8; 4];
-            if stream.read_exact(&mut len_buf).await.is_err() {
+            let (stream, addr) = listener.accept().await?;
+            info!("Client connected: {}", addr);
+            handle_client_single(stream, addr, &mut worker).await;
+        }
+    } else {
+        // Predictor/Vocoder are safe to share per request with a mutex.
+        let shared = Arc::new(Mutex::new(worker));
+        loop {
+            let (stream, addr) = listener.accept().await?;
+            info!("Client connected: {}", addr);
+            let shared = Arc::clone(&shared);
+            tokio::spawn(async move {
+                handle_client_shared(stream, addr, shared).await;
+            });
+        }
+    }
+}
+
+async fn handle_client_single(
+    mut stream: tokio::net::TcpStream,
+    addr: SocketAddr,
+    worker: &mut Worker,
+) {
+    let _ = stream.set_nodelay(true);
+    let mut msg_buf = Vec::with_capacity(16 * 1024);
+
+    loop {
+        match read_request(&mut stream, &mut msg_buf, addr).await {
+            Ok(Some(req)) => {
+                let resp = worker.handle_request(req).await;
+                if let Err(e) = send_response(&mut stream, &resp).await {
+                    warn!("Send error: {}", e);
+                    info!("Client disconnected: {}", addr);
+                    break;
+                }
+            }
+            Ok(None) => {
                 info!("Client disconnected: {}", addr);
                 break;
             }
-            let msg_len = u32::from_be_bytes(len_buf) as usize;
-            if msg_len > 100_000_000 {
-                warn!("Message too large: {} bytes", msg_len);
-                break;
-            }
-
-            // Read payload
-            let mut msg_buf = vec![0u8; msg_len];
-            if let Err(e) = stream.read_exact(&mut msg_buf).await {
-                warn!("Read error: {}", e);
-                break;
-            }
-
-            // Deserialize
-            let req: Request = match rmp_serde::from_slice(&msg_buf) {
-                Ok(r) => r,
-                Err(e) => {
-                    error!("Deserialize error: {}", e);
-                    let resp = Response {
-                        status: "error".into(),
-                        data: ResponseData::Init,
-                        error: Some(format!("Deserialize: {}", e)),
-                    };
-                    let _ = send_response(&mut stream, &resp).await;
-                    continue;
-                }
-            };
-
-            // Log which request type we're processing
-            let method_name = match &req {
-                Request::Ping => "ping",
-                Request::Init { .. } => "init",
-                Request::TokenizeAndEmbed { .. } => "tokenize_and_embed",
-                Request::TalkerPrefill { .. } => "talker_prefill",
-                Request::TalkerStep { .. } => "talker_step",
-                Request::CodePredict { .. } => "code_predict",
-                Request::Vocode { .. } => "vocode",
-                Request::LoadVoice { .. } => "load_voice",
-            };
-            debug!("Handling request: {}", method_name);
-
-            // Handle (with panic guard for FFI crashes)
-            let resp = worker.handle_request(req).await;
-
-            // Send response
-            if let Err(e) = send_response(&mut stream, &resp).await {
-                warn!("Send error: {}", e);
+            Err(e) => {
+                warn!("Client {} read failed: {}", addr, e);
+                let resp = Response {
+                    status: "error".into(),
+                    data: ResponseData::Init,
+                    error: Some(format!("Read: {}", e)),
+                };
+                let _ = send_response(&mut stream, &resp).await;
                 break;
             }
         }
     }
 }
 
+async fn handle_client_shared(
+    mut stream: tokio::net::TcpStream,
+    addr: SocketAddr,
+    worker: Arc<Mutex<Worker>>,
+) {
+    let _ = stream.set_nodelay(true);
+    let mut msg_buf = Vec::with_capacity(16 * 1024);
+
+    loop {
+        match read_request(&mut stream, &mut msg_buf, addr).await {
+            Ok(Some(req)) => {
+                let resp = {
+                    let mut locked = worker.lock().await;
+                    locked.handle_request(req).await
+                };
+                if let Err(e) = send_response(&mut stream, &resp).await {
+                    warn!("Send error: {}", e);
+                    info!("Client disconnected: {}", addr);
+                    break;
+                }
+            }
+            Ok(None) => {
+                info!("Client disconnected: {}", addr);
+                break;
+            }
+            Err(e) => {
+                warn!("Client {} read failed: {}", addr, e);
+                let resp = Response {
+                    status: "error".into(),
+                    data: ResponseData::Init,
+                    error: Some(format!("Read: {}", e)),
+                };
+                let _ = send_response(&mut stream, &resp).await;
+                break;
+            }
+        }
+    }
+}
+
+async fn read_request(
+    stream: &mut tokio::net::TcpStream,
+    msg_buf: &mut Vec<u8>,
+    addr: SocketAddr,
+) -> Result<Option<Request>> {
+    let mut len_buf = [0u8; 4];
+    if stream.read_exact(&mut len_buf).await.is_err() {
+        return Ok(None);
+    }
+    let msg_len = u32::from_be_bytes(len_buf) as usize;
+    if msg_len > 100_000_000 {
+        anyhow::bail!("Message too large: {} bytes from {}", msg_len, addr);
+    }
+
+    msg_buf.resize(msg_len, 0);
+    stream.read_exact(msg_buf).await?;
+
+    let req: Request = rmp_serde::from_slice(msg_buf)
+        .map_err(|e| anyhow::anyhow!("Deserialize request from {} failed: {}", addr, e))?;
+
+    let method_name = match &req {
+        Request::Ping => "ping",
+        Request::Init { .. } => "init",
+        Request::TokenizeAndEmbed { .. } => "tokenize_and_embed",
+        Request::TalkerPrefill { .. } => "talker_prefill",
+        Request::TalkerStep { .. } => "talker_step",
+        Request::CodePredict { .. } => "code_predict",
+        Request::Vocode { .. } => "vocode",
+        Request::LoadVoice { .. } => "load_voice",
+    };
+    debug!("Handling request from {}: {}", addr, method_name);
+
+    Ok(Some(req))
+}
+
 async fn send_response(stream: &mut tokio::net::TcpStream, resp: &Response) -> Result<()> {
-    let bytes = rmp_serde::to_vec_named(resp)?;
+    let bytes = rmp_serde::to_vec(resp)?;
     stream
         .write_all(&(bytes.len() as u32).to_be_bytes())
         .await?;
@@ -562,30 +646,39 @@ fn ok(data: ResponseData) -> Result<Response> {
     })
 }
 
-fn encode_f32_slice(data: &[f32]) -> String {
+fn encode_f32_slice(data: &[f32]) -> Vec<u8> {
     // Safety: f32 slice has compatible alignment and layout for u8 view
     let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
-    B64.encode(bytes)
+    bytes.to_vec()
 }
 
-fn decode_f32_vec(b64: &str) -> Result<Vec<f32>> {
-    let bytes = B64.decode(b64)?;
+fn decode_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
     Ok(bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
 }
 
-fn decode_i64_vec(b64: &str) -> Result<Vec<i64>> {
-    let bytes = B64.decode(b64)?;
+fn decode_f32_into(bytes: &[u8], out: &mut Vec<f32>) -> Result<()> {
+    if bytes.len() % 4 != 0 {
+        anyhow::bail!("Invalid f32 byte length: {}", bytes.len());
+    }
+    let n = bytes.len() / 4;
+    out.resize(n, 0.0);
+    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+        out[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    }
+    Ok(())
+}
+
+fn decode_i64_vec(bytes: &[u8]) -> Result<Vec<i64>> {
     Ok(bytes
         .chunks_exact(8)
         .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
         .collect())
 }
 
-fn decode_i64_array2(b64: &str, cols: usize) -> Result<Array2<i64>> {
-    let bytes = B64.decode(b64)?;
+fn decode_i64_array2_bytes(bytes: &[u8], cols: usize) -> Result<Array2<i64>> {
     let data: Vec<i64> = bytes
         .chunks_exact(8)
         .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))

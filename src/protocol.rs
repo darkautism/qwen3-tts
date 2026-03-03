@@ -1,34 +1,39 @@
 use serde::{Deserialize, Serialize};
 
+/// Reference codec token source for tokenization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RefCodecTokens {
+    /// Use tokens already loaded by Request::LoadVoice.
+    Loaded,
+    /// Inline raw int64 little-endian bytes (shape [N, 16]).
+    Inline(Vec<u8>),
+}
+
 /// Messages sent from Rust orchestrator to workers
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "method", content = "params")]
 pub enum Request {
     /// Initialize worker with model paths
-    #[serde(rename = "init")]
     Init { role: String, models_dir: String },
 
     /// Tokenize text and build prefix embeddings
-    #[serde(rename = "tokenize_and_embed")]
     TokenizeAndEmbed {
         text: String,
         language: String,
-        /// Base64-encoded ref_codec_tokens for voice cloning
-        ref_codec_tokens: Option<String>,
+        /// Voice cloning reference source
+        ref_codec_tokens: Option<RefCodecTokens>,
     },
 
     /// Prefill talker with prefix embeddings
-    #[serde(rename = "talker_prefill")]
     TalkerPrefill {
-        /// Base64-encoded float32 array [N, 1024]
-        prefix_embeddings: String,
+        /// Raw float32 little-endian bytes [N, 1024]
+        prefix_embeddings: Vec<u8>,
     },
 
     /// One talker decode step
-    #[serde(rename = "talker_step")]
     TalkerStep {
-        /// Base64-encoded float32 array [1024] - feedback embedding
-        feedback_embedding: String,
+        /// Raw float32 little-endian bytes [1024] - feedback embedding.
+        /// None means first decode step.
+        feedback_embedding: Option<Vec<u8>>,
         /// Sampling parameters
         temperature: f32,
         repetition_penalty: f32,
@@ -36,73 +41,68 @@ pub enum Request {
     },
 
     /// Predict codes 1-15 from hidden state
-    #[serde(rename = "code_predict")]
     CodePredict {
-        /// Base64-encoded float32 array [1024]
-        hidden_state: String,
+        /// Raw float32 little-endian bytes [1024]
+        hidden_state: Vec<u8>,
         code_0: i32,
         temperature: f32,
     },
 
     /// Convert codes to audio
-    #[serde(rename = "vocode")]
     Vocode {
-        /// Base64-encoded int64 array [N, 16]
-        codes: String,
+        /// Raw int64 little-endian bytes [N, 16]
+        codes: Vec<u8>,
         n_tokens: usize,
     },
 
     /// Load voice profile for cloning
-    #[serde(rename = "load_voice")]
     LoadVoice {
-        codec_tokens: String,
+        /// Raw int64 little-endian bytes [N, 16]
+        codec_tokens: Vec<u8>,
         n_tokens: usize,
         ref_text: Option<String>,
     },
 
     /// Health check
-    #[serde(rename = "ping")]
     Ping,
 }
 
 /// Typed response data — avoids serde_json::Value overhead in hot path
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
 pub enum ResponseData {
     /// TokenizeAndEmbed response
-    #[serde(rename = "tok_embed")]
     TokenizeAndEmbed {
-        prefix_embeddings: String,
+        /// Raw float32 little-endian bytes [N, 1024]
+        prefix_embeddings: Vec<u8>,
         n_prefix: usize,
         expected_output_tokens: usize,
     },
     /// TalkerPrefill response
-    #[serde(rename = "prefill")]
     TalkerPrefill { prefilled: usize },
     /// TalkerStep response (hot path)
-    #[serde(rename = "talker_step")]
     TalkerStep {
-        hidden_state: String,
+        /// Raw float32 little-endian bytes [1024]
+        hidden_state: Vec<u8>,
         code_0: i32,
         is_eos: bool,
     },
     /// CodePredict response (hot path)
-    #[serde(rename = "code_predict")]
     CodePredict {
         codes: Vec<i64>,
-        feedback_embedding: String,
+        /// Raw float32 little-endian bytes [1024]
+        feedback_embedding: Vec<u8>,
     },
     /// Vocode response
-    #[serde(rename = "vocode")]
-    Vocode { audio: String, n_samples: usize },
+    Vocode {
+        /// Raw i16 little-endian PCM bytes
+        audio: Vec<u8>,
+        n_samples: usize,
+    },
     /// LoadVoice response
-    #[serde(rename = "load_voice")]
     LoadVoice,
     /// Ping response
-    #[serde(rename = "ping")]
     Ping,
     /// Generic ack
-    #[serde(rename = "init")]
     Init,
 }
 

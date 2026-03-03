@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -30,7 +29,8 @@ impl WorkerClient {
 
     /// Send a request without waiting for response (for pipelining)
     pub async fn send_request(&mut self, req: &Request) -> Result<()> {
-        let payload = rmp_serde::to_vec_named(req).context("Failed to serialize request")?;
+        let payload = rmp_serde::to_vec(req)
+            .context("Failed to serialize request")?;
         let len = payload.len() as u32;
         self.stream.write_all(&len.to_be_bytes()).await?;
         self.stream.write_all(&payload).await?;
@@ -47,8 +47,9 @@ impl WorkerClient {
         let resp_len = u32::from_be_bytes(len_buf) as usize;
         self.resp_buf.resize(resp_len, 0);
         self.stream.read_exact(&mut self.resp_buf).await?;
-        let resp: Response = rmp_serde::from_slice(&self.resp_buf)
-            .context("Failed to deserialize worker response")?;
+        let resp: Response =
+            rmp_serde::from_slice(&self.resp_buf)
+                .context("Failed to deserialize worker response")?;
         if resp.status != "ok" {
             anyhow::bail!(
                 "Worker error: {}",
@@ -69,27 +70,26 @@ impl WorkerClient {
     }
 }
 
-// Helper to encode binary data as base64
-pub fn encode_f32(data: &[f32]) -> String {
+/// Convert f32 slice to raw little-endian bytes.
+pub fn encode_f32(data: &[f32]) -> Vec<u8> {
     let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
-    B64.encode(bytes)
+    bytes.to_vec()
 }
 
-pub fn encode_i64(data: &[i64]) -> String {
+/// Convert i64 slice to raw little-endian bytes.
+pub fn encode_i64(data: &[i64]) -> Vec<u8> {
     let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
-    B64.encode(bytes)
+    bytes.to_vec()
 }
 
-pub fn decode_f32(b64: &str) -> Result<Vec<f32>> {
-    let bytes = B64.decode(b64)?;
+pub fn decode_f32(bytes: &[u8]) -> Result<Vec<f32>> {
     Ok(bytes
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
 }
 
-pub fn decode_i16(b64: &str) -> Result<Vec<i16>> {
-    let bytes = B64.decode(b64)?;
+pub fn decode_i16(bytes: &[u8]) -> Result<Vec<i16>> {
     Ok(bytes
         .chunks_exact(2)
         .map(|c| i16::from_le_bytes([c[0], c[1]]))

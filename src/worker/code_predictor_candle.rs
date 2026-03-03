@@ -2,7 +2,7 @@
 //! Replaces the C GGML FFI wrapper with pure Rust.
 
 use anyhow::{Context, Result};
-use ndarray::{Array1, Array2};
+use ndarray::Array2;
 use std::path::Path;
 
 use super::candle_qwen3::Qwen3Model;
@@ -100,26 +100,18 @@ impl CodePredictorCandle {
     /// Predict codes 1-15 from hidden state and code_0 embedding (from TALKER).
     pub fn predict(
         &mut self,
-        hidden: &Array1<f32>,
-        code_0_embed: &Array1<f32>,
+        hidden: &[f32],
+        code_0_embed: &[f32],
         temperature: f32,
     ) -> Result<Vec<i32>> {
         self.model.clear_kv();
 
-        let hidden_tensor = Tensor::from_slice(
-            hidden.as_slice().unwrap(),
-            (1, 1, hidden.len()),
-            &self.device,
-        )
+        let hidden_tensor = Tensor::from_slice(hidden, (1, 1, hidden.len()), &self.device)
         .map_err(|e| anyhow::anyhow!("hidden tensor: {}", e))?;
 
         // Use TALKER's codec embedding for code_0 (not code predictor's own)
-        let code_0_emb = Tensor::from_slice(
-            code_0_embed.as_slice().unwrap(),
-            (1, 1, code_0_embed.len()),
-            &self.device,
-        )
-        .map_err(|e| anyhow::anyhow!("code_0_embed tensor: {}", e))?;
+        let code_0_emb = Tensor::from_slice(code_0_embed, (1, 1, code_0_embed.len()), &self.device)
+            .map_err(|e| anyhow::anyhow!("code_0_embed tensor: {}", e))?;
 
         // Prefill: hidden + code_0_embed as 2-token sequence
         let prefill_input = Tensor::cat(&[&hidden_tensor, &code_0_emb], 1)
@@ -149,7 +141,6 @@ impl CodePredictorCandle {
                 .and_then(|t| t.squeeze(0))
                 .map_err(|e| anyhow::anyhow!("squeeze logits: {}", e))?;
 
-            // Sample
             let code = sample_top_k(&logits, temperature, 50)?;
             codes.push(code);
 

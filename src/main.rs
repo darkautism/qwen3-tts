@@ -147,15 +147,14 @@ async fn cmd_speak(
 async fn cmd_serve(port: Option<u16>, with_mcp: bool) -> Result<()> {
     let (config, config_path) = Config::load_with_path(None)?;
     let listen_port = port.unwrap_or(config.server.port);
-
-    let pipeline = Pipeline::new(config.clone()).await?;
-    let pipeline = Arc::new(Mutex::new(pipeline));
+    let synthesis_lock = Arc::new(Mutex::new(()));
 
     if with_mcp {
-        let mcp_pipeline = pipeline.clone();
+        let mcp_pipeline = Arc::new(Mutex::new(Pipeline::new(config.clone()).await?));
         let mcp_config = config.clone();
+        let mcp_schedule_lock = synthesis_lock.clone();
         tokio::spawn(async move {
-            let server = mcp::server::McpServer::new(mcp_pipeline, mcp_config);
+            let server = mcp::server::McpServer::new(mcp_pipeline, mcp_config, mcp_schedule_lock);
             if let Err(e) = server.run().await {
                 tracing::error!("MCP server error: {}", e);
             }
@@ -163,9 +162,9 @@ async fn cmd_serve(port: Option<u16>, with_mcp: bool) -> Result<()> {
     }
 
     let state = Arc::new(api::openai::AppState {
-        pipeline: pipeline.clone(),
         config: Mutex::new(config.clone()),
         config_path,
+        synthesis_lock,
     });
 
     let app = api::openai::router(state);
@@ -190,7 +189,7 @@ async fn cmd_worker(
     // Pin CPU affinity before loading models (affects all threads)
     if let Some(ref core_spec) = cores {
         set_cpu_affinity(core_spec)?;
-    } else if big_cores {
+    } else {
         let big = detect_big_cores();
         if !big.is_empty() {
             let spec = big
@@ -199,8 +198,17 @@ async fn cmd_worker(
                 .collect::<Vec<_>>()
                 .join(",");
             set_cpu_affinity(&spec)?;
+            if big_cores {
+                info!("--big-cores specified (same as default auto big-core pinning)");
+            } else {
+                info!("Auto big-core pinning enabled by default");
+            }
         } else {
-            info!("No big cores detected, using all cores");
+            if big_cores {
+                info!("--big-cores set but no big cores detected, using all cores");
+            } else {
+                info!("No big cores detected, using all cores");
+            }
         }
     }
 
@@ -304,7 +312,8 @@ async fn cmd_mcp() -> Result<()> {
     let config = Config::load(None)?;
     let pipeline = Pipeline::new(config.clone()).await?;
     let pipeline = Arc::new(Mutex::new(pipeline));
-    let server = mcp::server::McpServer::new(pipeline, config);
+    let synthesis_lock = Arc::new(Mutex::new(()));
+    let server = mcp::server::McpServer::new(pipeline, config, synthesis_lock);
     server.run().await
 }
 

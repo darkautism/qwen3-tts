@@ -58,7 +58,8 @@ impl Vocoder {
 
     /// Convert codec tokens [n_tokens, 16] → audio f32 samples
     pub fn synthesize(&mut self, codes: &[i64], n_tokens: usize) -> Result<Vec<f32>> {
-        let mut audio_chunks = Vec::new();
+        let mut audio_chunks = Vec::with_capacity(n_tokens * SAMPLES_PER_TOKEN);
+        let mut padded = vec![0i64; self.max_tokens * 16];
         let mut chunk_start = 0;
 
         while chunk_start < n_tokens {
@@ -66,7 +67,7 @@ impl Vocoder {
             let chunk_len = chunk_end - chunk_start;
 
             // Pad to max_tokens
-            let mut padded = vec![0i64; self.max_tokens * 16];
+            padded.fill(0);
             let src = &codes[chunk_start * 16..chunk_end * 16];
             padded[..src.len()].copy_from_slice(src);
 
@@ -291,8 +292,16 @@ struct OnnxVocoder {
 
 impl OnnxVocoder {
     fn load(model_path: &Path) -> Result<Self> {
+        let intra_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(1, 4);
         let session = ort::session::Session::builder()?
-            .with_intra_threads(4)?
+            .with_parallel_execution(false)?
+            .with_inter_threads(1)?
+            .with_intra_threads(intra_threads)?
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::All)?
+            .with_memory_pattern(true)?
             .commit_from_file(model_path)
             .with_context(|| format!("Load ONNX vocoder: {}", model_path.display()))?;
 
@@ -310,8 +319,8 @@ impl OnnxVocoder {
     }
 
     fn run(&mut self, codes: &[i64], max_tokens: usize) -> Result<Vec<f32>> {
-        let input_arr = ndarray::Array3::from_shape_vec((1, max_tokens, 16), codes.to_vec())?;
-        let input_tensor = ort::value::Tensor::from_array(input_arr)?;
+        let input_tensor =
+            ort::value::TensorRef::from_array_view(([1usize, max_tokens, 16usize], codes))?;
         let outputs = self.session.run(ort::inputs![input_tensor])?;
         let audio = outputs[0]
             .try_extract_array::<f32>()
