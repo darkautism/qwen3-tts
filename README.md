@@ -118,7 +118,7 @@ RKNN vocoder trades audio quality for speed — INT8 quantization introduces aud
 ### Initialize Configuration
 
 ```bash
-# Generate qwen3-tts.toml with your worker IPs
+# Generate ~/.config/qwen3-tts/config.toml with your worker IPs
 qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ```
 
@@ -139,6 +139,40 @@ qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 > Custom HF repo: `--repo your-name/your-repo`
 > For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
 > On big.LITTLE SoCs (RK3588), big-core pinning is enabled by default (no extra flag required).
+
+### Deploy with systemd (user services)
+
+Systemd units are provided in `deploy/systemd/` for:
+- `qwen3-tts-talker.service`
+- `qwen3-tts-predictor.service` (**default `--quant q4`**)
+- `qwen3-tts-vocoder.service` (**ONNX FP32, no RKNN noise**)
+- `qwen3-tts-frontend.service` (OpenAI API + Web UI)
+
+Install:
+```bash
+chmod +x deploy/systemd/install-user-systemd.sh
+./deploy/systemd/install-user-systemd.sh
+```
+
+Main node (talker + frontend):
+```bash
+systemctl --user enable --now qwen3-tts-talker.service qwen3-tts-frontend.service
+```
+
+Compute node (predictor + vocoder):
+```bash
+systemctl --user enable --now qwen3-tts-predictor.service qwen3-tts-vocoder.service
+```
+
+Config path behavior:
+- Units set `HOME=%h`, `XDG_CONFIG_HOME=%h/.config`, and `WorkingDirectory=%h/.config/qwen3-tts`.
+- This ensures the binary reads `~/.config/qwen3-tts/config.toml` in `systemctl --user`.
+- `~/.config/qwen3-tts.toml` is **not** used by this project.
+
+User-level overrides (binary path, ports, quant, repo):
+```bash
+~/.config/qwen3-tts/systemd.env
+```
 
 ### Synthesize Speech
 
