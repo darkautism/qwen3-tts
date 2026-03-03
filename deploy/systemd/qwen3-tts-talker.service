@@ -7,14 +7,13 @@ Wants=network-online.target
 Type=simple
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
-Environment=QWEN3_TTS_BIN=%h/.local/bin/qwen3-tts
+Environment=PATH=%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=QWEN3_TTS_REPO=kautism/qwen3-tts-rk3588
 Environment=QWEN3_TTS_TALKER_BIND=0.0.0.0:9090
 EnvironmentFile=-%h/.config/qwen3-tts/systemd.env
 WorkingDirectory=%h/.config/qwen3-tts
 ExecStartPre=/usr/bin/mkdir -p %h/.config/qwen3-tts
-ExecStartPre=/usr/bin/test -f %h/.config/qwen3-tts/config.toml
-ExecStart=/usr/bin/bash -lc '"${QWEN3_TTS_BIN}" worker -r talker -b "${QWEN3_TTS_TALKER_BIND}" --repo "${QWEN3_TTS_REPO}"'
+ExecStart=/usr/bin/env qwen3-tts worker -r talker -b ${QWEN3_TTS_TALKER_BIND} --repo ${QWEN3_TTS_REPO}
 Restart=always
 RestartSec=2
 NoNewPrivileges=true

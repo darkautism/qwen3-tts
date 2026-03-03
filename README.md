@@ -23,6 +23,35 @@ We have WebUI Now!
 
 </div>
 
+## Easy Install (systemd --user)
+
+Run these on the corresponding machines:
+
+```bash
+# Main node: Talker worker
+curl -fsSL https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/systemd/install-talker.sh | bash
+
+# Compute node: Predictor worker (default q4)
+curl -fsSL https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/systemd/install-predictor.sh | bash
+
+# Compute node: Vocoder worker (ONNX FP32, no RKNN noise)
+curl -fsSL https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/systemd/install-vocoder.sh | bash
+
+# Main node: Frontend (OpenAI API + Web UI)
+curl -fsSL https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/systemd/install-frontend.sh | bash
+```
+
+Each script will:
+1. Run `cargo install qwen3-tts-rs` if `qwen3-tts` is not found.
+2. Download the corresponding unit file from GitHub raw path to `~/.config/systemd/user/`.
+3. Reload and enable the user service.
+4. Attempt `loginctl enable-linger $USER` so user services survive reboot.
+
+Config note:
+- Frontend reads `~/.config/qwen3-tts/config.toml` under `systemctl --user`.
+- If missing, generate it with:
+  `qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>`.
+
 ## Architecture
 
 ```
@@ -139,40 +168,6 @@ qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 > Custom HF repo: `--repo your-name/your-repo`
 > For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
 > On big.LITTLE SoCs (RK3588), big-core pinning is enabled by default (no extra flag required).
-
-### Deploy with systemd (user services)
-
-Systemd units are provided in `deploy/systemd/` for:
-- `qwen3-tts-talker.service`
-- `qwen3-tts-predictor.service` (**default `--quant q4`**)
-- `qwen3-tts-vocoder.service` (**ONNX FP32, no RKNN noise**)
-- `qwen3-tts-frontend.service` (OpenAI API + Web UI)
-
-Install:
-```bash
-chmod +x deploy/systemd/install-user-systemd.sh
-./deploy/systemd/install-user-systemd.sh
-```
-
-Main node (talker + frontend):
-```bash
-systemctl --user enable --now qwen3-tts-talker.service qwen3-tts-frontend.service
-```
-
-Compute node (predictor + vocoder):
-```bash
-systemctl --user enable --now qwen3-tts-predictor.service qwen3-tts-vocoder.service
-```
-
-Config path behavior:
-- Units set `HOME=%h`, `XDG_CONFIG_HOME=%h/.config`, and `WorkingDirectory=%h/.config/qwen3-tts`.
-- This ensures the binary reads `~/.config/qwen3-tts/config.toml` in `systemctl --user`.
-- `~/.config/qwen3-tts.toml` is **not** used by this project.
-
-User-level overrides (binary path, ports, quant, repo):
-```bash
-~/.config/qwen3-tts/systemd.env
-```
 
 ### Synthesize Speech
 
