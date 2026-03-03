@@ -249,10 +249,34 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 [[package]]
 name = "candle-core"
 version = "0.9.2"
-source = "git+https://github.com/darkautism/candle.git?branch=feat%2Faarch64-sdot#76aa1213cd6e28ec9c87f58b63ef89906243bddb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091"
 dependencies = [
  "byteorder",
- "float8",
+ "float8 0.6.1",
+ "gemm",
+ "half",
+ "libm",
+ "memmap2",
+ "num-traits",
+ "num_cpus",
+ "rand 0.9.2",
+ "rand_distr",
+ "rayon",
+ "safetensors 0.7.0",
+ "thiserror 2.0.18",
+ "yoke",
+ "zip 7.2.0",
+]
+
+[[package]]
+name = "candle-core-aarch64-sdot"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a625915be70215f4fcd52807f8bd3d0418a5b07bc83b660722eb4ce328ed0d1f"
+dependencies = [
+ "byteorder",
+ "float8 0.7.0",
  "gemm",
  "half",
  "libm",
@@ -689,6 +713,18 @@ dependencies = [
  "crc32fast",
  "miniz_oxide",
  "zlib-rs",
+]
+
+[[package]]
+name = "float8"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "719a903cc23e4a89e87962c2a80fdb45cdaad0983a89bd150bb57b4c8571a7d5"
+dependencies = [
+ "half",
+ "num-traits",
+ "rand 0.9.2",
+ "rand_distr",
 ]
 
 [[package]]
@@ -2035,12 +2071,13 @@ dependencies = [
 
 [[package]]
 name = "qwen3-tts-rs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
  "bytemuck",
  "candle-core",
+ "candle-core-aarch64-sdot",
  "candle-nn",
  "clap",
  "dirs",

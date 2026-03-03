@@ -1,6 +1,6 @@
 [package]
 name = "qwen3-tts-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Distributed Qwen3-TTS inference on RK3588 cluster"
 license = "MIT"
@@ -69,8 +69,9 @@ hf-hub = "0.4"
 dirs = "6"
 
 # Candle (speech tokenizer encoder for voice cloning on ARM)
-candle-core = "0.9"
-candle-nn = "0.9"
+candle-core-aarch64-sdot = "0.9.2"
+candle-core = "0.9.2"
+candle-nn = "0.9.2"
 safetensors = "0.5"
 
 # Zip (for npz loading in ggml-backend)
@@ -88,4 +89,4 @@ ggml-backend = ["dep:libloading"]  # Use C++ GGML for both talker and predictor 
 ggml-predictor = []  # Use C++ GGML only for code predictor (3x faster on ARM, needs libcode_pred_ggml.a)
 
 [patch.crates-io]
-candle-core = { git = "https://github.com/darkautism/candle.git", branch = "feat/aarch64-sdot" }
+#candle-core = { git = "https://github.com/darkautism/candle.git", branch = "feat/aarch64-sdot" }
