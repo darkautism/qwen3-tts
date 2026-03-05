@@ -1,8 +1,6 @@
 pub mod candle_qwen3;
 pub mod code_predictor;
 pub mod code_predictor_candle;
-#[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
-pub mod code_predictor_ggml;
 pub mod embedder;
 pub mod sampling;
 pub mod talker;
@@ -57,11 +55,9 @@ struct PredictorState {
     hidden_decode_buf: Vec<f32>,
 }
 
-/// Abstraction over Candle, GGML, or ONNX code predictor
+/// Abstraction over Candle or ONNX code predictor
 enum PredictorBackend {
     Candle(code_predictor_candle::CodePredictorCandle),
-    #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
-    Ggml(code_predictor_ggml::CodePredictorGgml),
     Onnx(code_predictor::CodePredictor),
 }
 
@@ -75,11 +71,6 @@ impl PredictorBackend {
     ) -> Result<Vec<i32>> {
         match self {
             PredictorBackend::Candle(cp) => cp.predict(hidden, code_0_embed, temperature),
-            #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
-            PredictorBackend::Ggml(cp) => {
-                let hidden_arr = Array1::from_vec(hidden.to_vec());
-                cp.predict(&hidden_arr, _code_0, temperature)
-            }
             PredictorBackend::Onnx(cp) => {
                 let hidden_arr = Array1::from_vec(hidden.to_vec());
                 let code_0_embed_arr = Array1::from_vec(code_0_embed.to_vec());
@@ -91,8 +82,6 @@ impl PredictorBackend {
     fn codec_embeddings(&self) -> &Vec<Array2<f32>> {
         match self {
             PredictorBackend::Candle(cp) => &cp.codec_embeddings,
-            #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
-            PredictorBackend::Ggml(cp) => &cp.codec_embeddings,
             PredictorBackend::Onnx(cp) => &cp.codec_embeddings,
         }
     }
@@ -145,8 +134,10 @@ impl Worker {
             "predictor" => {
                 let cp_dir = models_dir.join("code_predictor");
 
-                // Try GGML C (ggml-backend feature) → Candle GGUF → ONNX (fallback)
+                // Prefer Candle GGUF → ONNX (legacy fallback)
                 let gguf_exists = [
+                    "code-predictor-q8_0.gguf",
+                    "code-predictor-q4_0.gguf",
                     "qwen3-tts-0.6b-q8_0.gguf",
                     "qwen3-tts-0.6b-q4_0.gguf",
                     "qwen3-tts-0.6b-f16.gguf",
@@ -155,19 +146,20 @@ impl Worker {
                 .any(|f| cp_dir.join(f).exists());
 
                 let code_pred = if gguf_exists {
-                    #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
-                    {
-                        info!("Using GGML code predictor (optimized C backend)");
-                        let ggml = code_predictor_ggml::CodePredictorGgml::load(&cp_dir)?;
-                        PredictorBackend::Ggml(ggml)
-                    }
-                    #[cfg(not(any(feature = "ggml-backend", feature = "ggml-predictor")))]
-                    {
-                        info!("Using Candle code predictor (quantized GGUF)");
-                        let candle = code_predictor_candle::CodePredictorCandle::load(&cp_dir)?;
-                        PredictorBackend::Candle(candle)
-                    }
+                    info!("Using Candle code predictor (quantized GGUF)");
+                    let candle = code_predictor_candle::CodePredictorCandle::load(&cp_dir)?;
+                    PredictorBackend::Candle(candle)
                 } else {
+                    let onnx_path = cp_dir.join("code_predictor_core.onnx");
+                    let weights_path = cp_dir.join("code_predictor_weights.npz");
+                    if !onnx_path.exists() || !weights_path.exists() {
+                        anyhow::bail!(
+                            "No GGUF predictor model found in {} and ONNX fallback assets are missing. \
+Expected GGUF: code-predictor-q8_0.gguf / code-predictor-q4_0.gguf. \
+Expected ONNX fallback: code_predictor_core.onnx + code_predictor_weights.npz",
+                            cp_dir.display()
+                        );
+                    }
                     info!("Falling back to ONNX code predictor");
                     detect_ort_lib();
                     let onnx = code_predictor::CodePredictor::load(&cp_dir)?;
@@ -421,9 +413,12 @@ impl Worker {
             .context("codec_embedding row is not contiguous")?;
 
         let t0 = std::time::Instant::now();
-        let predicted = ps
-            .code_predictor
-            .predict(&ps.hidden_decode_buf, code_0, code_0_embed_slice, temperature)?;
+        let predicted = ps.code_predictor.predict(
+            &ps.hidden_decode_buf,
+            code_0,
+            code_0_embed_slice,
+            temperature,
+        )?;
         let pred_ms = t0.elapsed().as_millis();
 
         // Feedback = tts_pad + talker_codec_embed[code_0] + sum(cp_codec_embed[gi][code_i] for i=1..15)

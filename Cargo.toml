@@ -77,8 +77,7 @@ libc = "0.2"
 [features]
 default = []
 rknn-vocoder = ["dep:rknn-rs"]  # Use RKNN INT8 NPU vocoder instead of ONNX FP32 (faster, has quantization noise)
-ggml-backend = ["dep:libloading"]  # Use C++ GGML for both talker and predictor (needs external .so)
-ggml-predictor = []  # Use C++ GGML only for code predictor (3x faster on ARM, needs libcode_pred_ggml.a)
+ggml-backend = ["dep:libloading"]  # Use llama.cpp backend for talker (needs external .so)
 onnx-cuda = []  # Enable ONNX Runtime CUDA execution provider (opt-in)
 
 [patch.crates-io]
