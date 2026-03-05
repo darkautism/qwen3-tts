@@ -158,12 +158,14 @@ cargo build --release --features rknn-vocoder
 |---------|-------------|-------------------|-------------|
 | (default) | Candle inference + ONNX vocoder | `libonnxruntime.so` | **~5.5 tok/s** |
 | `onnx-cuda` | ONNX CUDA EP for vocoder (+ predictor ONNX fallback path) | `onnxruntime-gpu` + CUDA/cuDNN | GPU-dependent |
+| `ggml-backend` | llama.cpp talker + GGML predictor | `llama_wrapper.so` + static GGML libs | Fastest on tuned ARM |
+| `ggml-predictor` | GGML predictor only (talker stays Candle) | static GGML libs | Predictor-only acceleration |
 | `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ has noise |
 
 Default uses Candle (pure Rust) inference — no C/C++ library installation needed.
 The Candle backend includes SDOT inline assembly optimization and benefits greatly from stripped GGUF models.
 RKNN vocoder trades audio quality for speed — INT8 quantization introduces audible artifacts.
-Predictor does **not** require ONNX and GGUF at the same time: it uses GGUF (Candle) by default, and only falls back to ONNX when GGUF is missing.
+Predictor does **not** require ONNX and GGUF at the same time: it prefers GGUF (GGML/Candle), and only falls back to ONNX when GGUF is missing.
 
 ## Quick Start
 

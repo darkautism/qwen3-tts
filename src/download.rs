@@ -25,6 +25,11 @@ const PREDICTOR_EMBED_FILES: &[&str] = &[
     "predictor/embeddings/codec_embedding.npy",
     "predictor/embeddings/tts_pad_embed.npy",
 ];
+const PREDICTOR_ONNX_FILES: &[&str] = &[
+    "predictor/code_predictor/code_predictor_core.onnx",
+    "predictor/code_predictor/code_predictor_core.onnx.data",
+    "predictor/code_predictor/code_predictor_weights.npz",
+];
 
 /// Files needed for the vocoder role
 #[cfg(feature = "rknn-vocoder")]
@@ -94,12 +99,11 @@ fn infer_repo_root(cached_path: &Path, repo_file: &str) -> Option<PathBuf> {
 
 fn predictor_files_for_quant() -> Vec<&'static str> {
     let quant = std::env::var("QWEN3_TTS_QUANT").unwrap_or_else(|_| "q8".to_string());
-    let gguf = if quant.eq_ignore_ascii_case("q4") {
-        PREDICTOR_Q4_FILE
-    } else {
-        PREDICTOR_Q8_FILE
-    };
-    let mut files = vec![gguf];
+    let mut files = vec![PREDICTOR_Q8_FILE];
+    if quant.eq_ignore_ascii_case("q4") {
+        files.push(PREDICTOR_Q4_FILE);
+    }
     files.extend_from_slice(PREDICTOR_EMBED_FILES);
+    files.extend_from_slice(PREDICTOR_ONNX_FILES);
     files
 }

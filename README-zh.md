@@ -127,12 +127,14 @@ cargo build --release --features rknn-vocoder
 |---------|------|----------|------|
 | (預設) | Candle 推理 + ONNX vocoder | `libonnxruntime.so` | **~5.5 tok/s** |
 | `onnx-cuda` | ONNX CUDA EP（vocoder + predictor 的 ONNX 回退路徑） | `onnxruntime-gpu` + CUDA/cuDNN | 依 GPU 而定 |
+| `ggml-backend` | llama.cpp talker + GGML predictor | `llama_wrapper.so` + 靜態 GGML 庫 | 在調校 ARM 上最快 |
+| `ggml-predictor` | 僅 GGML predictor（talker 保持 Candle） | 靜態 GGML 庫 | 僅加速 predictor |
 | `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ 有雜音 |
 
 預設使用 Candle (純 Rust) 推理，不需額外安裝 C/C++ 函式庫。
 Candle 後端包含 SDOT 內聯組語優化，搭配精簡版 GGUF 模型可大幅提升效能。
 RKNN vocoder 以音質換取速度 — INT8 量化會引入可聽見的雜音。
-Predictor **不需要同時** ONNX + GGUF：預設走 GGUF（Candle），只有在 GGUF 缺失時才回退到 ONNX。
+Predictor **不需要同時** ONNX + GGUF：會優先走 GGUF（GGML/Candle），只有在 GGUF 缺失時才回退到 ONNX。
 
 ## 快速開始
 
