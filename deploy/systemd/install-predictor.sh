@@ -2,6 +2,7 @@
 set -euo pipefail
 
 RAW_BASE="https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/systemd"
+GIT_REPO="https://github.com/darkautism/qwen3-tts"
 SERVICE="qwen3-tts-predictor.service"
 UNIT_DIR="${HOME}/.config/systemd/user"
 CFG_DIR="${HOME}/.config/qwen3-tts"
@@ -12,7 +13,7 @@ if ! command -v qwen3-tts >/dev/null 2>&1; then
     echo "cargo not found. Install Rust first: https://rustup.rs" >&2
     exit 1
   fi
-  cargo install qwen3-tts-rs
+  cargo install --git "${GIT_REPO}" --locked qwen3-tts-rs
 fi
 
 mkdir -p "${UNIT_DIR}" "${CFG_DIR}"

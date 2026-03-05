@@ -42,7 +42,7 @@ curl -fsSL https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/
 ```
 
 Each script will:
-1. Run `cargo install qwen3-tts-rs` if `qwen3-tts` is not found.
+1. Run `cargo install --git https://github.com/darkautism/qwen3-tts --locked qwen3-tts-rs` if `qwen3-tts` is not found (install from GitHub source, not crates.io).
 2. Download the corresponding unit file from GitHub raw path to `~/.config/systemd/user/`.
 3. Reload and enable the user service.
 4. Attempt `loginctl enable-linger $USER` so user services survive reboot.
