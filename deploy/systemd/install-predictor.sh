@@ -7,13 +7,23 @@ SERVICE="qwen3-tts-predictor.service"
 UNIT_DIR="${HOME}/.config/systemd/user"
 CFG_DIR="${HOME}/.config/qwen3-tts"
 ENV_FILE="${CFG_DIR}/systemd.env"
+CARGO_HOME="${HOME}/.cargo"
+CARGO_BIN="${CARGO_HOME}/bin"
+QWEN3_TTS_BIN="${CARGO_BIN}/qwen3-tts"
 
-if ! command -v qwen3-tts >/dev/null 2>&1; then
+export PATH="${CARGO_BIN}:${PATH}"
+
+if [[ ! -x "${QWEN3_TTS_BIN}" ]]; then
   if ! command -v cargo >/dev/null 2>&1; then
     echo "cargo not found. Install Rust first: https://rustup.rs" >&2
     exit 1
   fi
-  cargo install --git "${GIT_REPO}" --locked qwen3-tts-rs
+  cargo install --git "${GIT_REPO}" --locked --root "${CARGO_HOME}" qwen3-tts-rs
+fi
+
+if [[ ! -x "${QWEN3_TTS_BIN}" ]]; then
+  echo "qwen3-tts not found at ${QWEN3_TTS_BIN}" >&2
+  exit 1
 fi
 
 mkdir -p "${UNIT_DIR}" "${CFG_DIR}"

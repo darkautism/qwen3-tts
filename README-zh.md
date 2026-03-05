@@ -157,7 +157,7 @@ qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
 > qwen3-tts 會優先使用 HuggingFace Hub cache 路徑（由 `hf-hub` `repo.get(...)` 回傳）。
-> 只有在 Hub 解析失敗且本地 `~/.local/share/qwen3-tts/models/{role}/` 檔案完整時，才回退到本地檔案。
+> 只有在 Hub 解析失敗且本地 `${XDG_DATA_HOME:-$HOME/.local/share}/qwen3-tts/models/{role}/` 檔案完整時，才回退到本地檔案。
 > 自定義 HF repo: `--repo your-name/your-repo`
 > 指定 CPU 核心: `--cores 4-7` 或 `--cores 4,5,6,7`
 > 在 big.LITTLE SoC（RK3588）上，預設已啟用大核心綁定，不需要額外參數。

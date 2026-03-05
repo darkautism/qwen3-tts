@@ -42,7 +42,7 @@ curl -fsSL https://github.com/darkautism/qwen3-tts/raw/refs/heads/master/deploy/
 ```
 
 Each script will:
-1. Run `cargo install --git https://github.com/darkautism/qwen3-tts --locked qwen3-tts-rs` if `qwen3-tts` is not found (install from GitHub source, not crates.io).
+1. Install `qwen3-tts-rs` from GitHub to `~/.cargo/bin` (`cargo install --git https://github.com/darkautism/qwen3-tts --locked --root "$HOME/.cargo" qwen3-tts-rs`) if `~/.cargo/bin/qwen3-tts` is missing.
 2. Download the corresponding unit file from GitHub raw path to `~/.config/systemd/user/`.
 3. Reload and enable the user service.
 4. Attempt `loginctl enable-linger $USER` so user services survive reboot.
@@ -188,7 +188,7 @@ qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
 > qwen3-tts resolves role files from HuggingFace Hub cache paths (from `hf-hub` `repo.get(...)`).
-> It only falls back to local `~/.local/share/qwen3-tts/models/{role}/` if Hub resolution fails and local files are complete.
+> It only falls back to local `${XDG_DATA_HOME:-$HOME/.local/share}/qwen3-tts/models/{role}/` if Hub resolution fails and local files are complete.
 > Custom HF repo: `--repo your-name/your-repo`
 > For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
 > On big.LITTLE SoCs (RK3588), big-core pinning is enabled by default (no extra flag required).
