@@ -236,6 +236,7 @@ async fn cmd_worker(
 }
 
 /// Parse core spec ("4,5" or "4-7" or "4,5,6-7") and set CPU affinity via sched_setaffinity
+#[cfg(target_os = "linux")]
 fn set_cpu_affinity(spec: &str) -> Result<()> {
     let mut cores = Vec::new();
     for part in spec.split(',') {
@@ -292,6 +293,7 @@ fn set_cpu_affinity(spec: &str) -> Result<()> {
 
 /// Detect big (performance) CPU cores by reading /sys/devices/system/cpu/cpu*/cpu_capacity
 /// On RK3588: A76 cores report capacity=1024, A55 cores report capacity=446
+#[cfg(target_os = "linux")]
 fn detect_big_cores() -> Vec<usize> {
     let mut big = Vec::new();
     let cpu_dir = std::path::Path::new("/sys/devices/system/cpu");
@@ -308,6 +310,16 @@ fn detect_big_cores() -> Vec<usize> {
     big
 }
 
+#[cfg(not(target_os = "linux"))]
+fn set_cpu_affinity(_spec: &str) -> Result<()> {
+    anyhow::bail!("CPU affinity pinning is only supported on Linux")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detect_big_cores() -> Vec<usize> {
+    Vec::new()
+}
+
 async fn cmd_mcp() -> Result<()> {
     let config = Config::load(None)?;
     let pipeline = Pipeline::new(config.clone()).await?;
@@ -322,32 +334,27 @@ async fn cmd_init(
     predictor_ip: String,
     vocoder_ip: Option<String>,
 ) -> Result<()> {
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+    let config_dir = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+        .join(".config")
         .join("qwen3-tts");
     std::fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join("config.toml");
 
-    let vocoder_section = if let Some(ref vip) = vocoder_ip {
-        let (host, port) = if let Some(idx) = vip.rfind(':') {
+    let (vocoder_host, vocoder_port) = if let Some(ref vip) = vocoder_ip {
+        if let Some(idx) = vip.rfind(':') {
             let port_str = &vip[idx + 1..];
             if let Ok(p) = port_str.parse::<u16>() {
-                (&vip[..idx], p)
+                (vip[..idx].to_string(), p)
             } else {
-                (vip.as_str(), 9092u16)
+                (vip.clone(), 9092u16)
             }
         } else {
-            (vip.as_str(), 9092u16)
-        };
-        format!(
-            r#"
-[workers.vocoder]
-host = "{host}"
-port = {port}
-"#
-        )
+            (vip.clone(), 9092u16)
+        }
     } else {
-        String::new()
+        (predictor_ip.clone(), 9092u16)
     };
 
     let content = format!(
@@ -355,7 +362,7 @@ port = {port}
 #
 # Talker:    Tokenizer + TextEmbedder + Talker LLM
 # Predictor: CodePredictor (ONNX)
-# Vocoder:   Vocoder (RKNN/ONNX) — 可選獨立部署，不設則使用 predictor 端點
+# Vocoder:   Vocoder (RKNN/ONNX)
 
 [models]
 dir = "~/.local/share/qwen3-tts/models"
@@ -367,7 +374,11 @@ port = 9090
 [workers.predictor]
 host = "{predictor_ip}"
 port = 9091
-{vocoder_section}
+
+[workers.vocoder]
+host = "{vocoder_host}"
+port = {vocoder_port}
+
 [defaults]
 language = "chinese"
 max_tokens = 200
@@ -386,19 +397,13 @@ port = 8080
     println!();
     println!("  Talker    : {}:9090", talker_ip);
     println!("  Predictor : {}:9091", predictor_ip);
-    if let Some(ref vip) = vocoder_ip {
-        println!("  Vocoder   : {}:9092", vip);
-    } else {
-        println!("  Vocoder   : (與 predictor 同端點)");
-    }
+    println!("  Vocoder   : {}:{}", vocoder_host, vocoder_port);
     println!();
     println!("下一步:");
     println!("  # 各機器啟動 worker");
     println!("  qwen3-tts worker -r talker");
     println!("  qwen3-tts worker -r predictor");
-    if vocoder_ip.is_some() {
-        println!("  qwen3-tts worker -r vocoder");
-    }
+    println!("  qwen3-tts worker -r vocoder");
     println!();
     println!("  # 合成語音");
     println!("  qwen3-tts speak \"你好世界\"");

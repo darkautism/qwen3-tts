@@ -19,10 +19,9 @@ const TALKER_FILES: &[&str] = &[
     "talker/embeddings/tts_pad_embed.npy",
 ];
 
-/// Files needed for the predictor role
-const PREDICTOR_FILES: &[&str] = &[
-    "predictor/code_predictor/code-predictor-q8_0.gguf",
-    "predictor/code_predictor/code_predictor_weights.npz",
+const PREDICTOR_Q8_FILE: &str = "predictor/code_predictor/code-predictor-q8_0.gguf";
+const PREDICTOR_Q4_FILE: &str = "predictor/code_predictor/code-predictor-q4_0.gguf";
+const PREDICTOR_EMBED_FILES: &[&str] = &[
     "predictor/embeddings/codec_embedding.npy",
     "predictor/embeddings/tts_pad_embed.npy",
 ];
@@ -34,83 +33,73 @@ const VOCODER_FILES: &[&str] = &["vocoder/vocoder.rknn"];
 #[cfg(not(feature = "rknn-vocoder"))]
 const VOCODER_FILES: &[&str] = &["vocoder/vocoder.onnx"];
 
-/// Extra file for Q4 predictor quantization
-const PREDICTOR_Q4_FILE: &str = "predictor/code_predictor/code-predictor-q4_0.gguf";
-
 /// Download models for a specific role from HuggingFace Hub.
 /// Returns the path to the role's model directory.
 pub fn ensure_models(role: &str, models_dir: &Path, repo_id: Option<&str>) -> Result<PathBuf> {
     let repo = repo_id.unwrap_or(DEFAULT_REPO);
     let role_dir = models_dir.join(role);
 
-    let mut files: Vec<&str> = match role {
+    let files: Vec<&str> = match role {
         "talker" => TALKER_FILES.to_vec(),
-        "predictor" => PREDICTOR_FILES.to_vec(),
+        "predictor" => predictor_files_for_quant(),
         "vocoder" => VOCODER_FILES.to_vec(),
         _ => anyhow::bail!("Unknown role: {}", role),
     };
 
-    // Download Q4 GGUF when quant preference is q4
-    if role == "predictor" {
-        if let Ok(q) = std::env::var("QWEN3_TTS_QUANT") {
-            if q == "q4" {
-                files.push(PREDICTOR_Q4_FILE);
-            }
-        }
-    }
-
-    // Check if all files exist
-    let missing: Vec<&&str> = files
-        .iter()
-        .filter(|f| {
-            let local = models_dir.join(f);
-            !local.exists()
-        })
-        .collect();
-
-    if missing.is_empty() {
-        info!("All {} model files present in {}", role, role_dir.display());
-        return Ok(role_dir);
-    }
-
-    info!(
-        "Downloading {} missing files for {} from {}...",
-        missing.len(),
-        role,
-        repo
-    );
+    let local_complete = files.iter().all(|f| models_dir.join(f).exists());
+    info!("Resolving {} model files from HF Hub cache ({})...", role, repo);
 
     let api = Api::new().context("Initialize HuggingFace Hub API")?;
     let repo_handle = api.model(repo.to_string());
+    let mut cache_root: Option<PathBuf> = None;
 
-    for &file in &missing {
-        info!("  ↓ {}", file);
-        let cached_path = repo_handle
-            .get(file)
-            .with_context(|| format!("Download {}", file))?;
-
-        // hf-hub caches to ~/.cache/huggingface; symlink/copy to our models dir
-        let local_path = models_dir.join(file);
-        if let Some(parent) = local_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Create symlink if possible, otherwise copy
-        #[cfg(unix)]
-        {
-            if local_path.exists() || local_path.is_symlink() {
-                std::fs::remove_file(&local_path).ok();
+    for &file in &files {
+        let cached_path = match repo_handle.get(file) {
+            Ok(p) => p,
+            Err(_e) if local_complete => {
+                info!(
+                    "HF resolve failed for {}, using local role dir: {}",
+                    file,
+                    role_dir.display()
+                );
+                return Ok(role_dir);
             }
-            std::os::unix::fs::symlink(&cached_path, &local_path).unwrap_or_else(|_| {
-                std::fs::copy(&cached_path, &local_path).expect("Failed to copy model file");
-            });
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::copy(&cached_path, &local_path)?;
+            Err(e) => return Err(e).with_context(|| format!("Download {}", file)),
+        };
+
+        if cache_root.is_none() {
+            cache_root = infer_repo_root(&cached_path, file);
         }
     }
 
-    info!("✓ All {} model files ready", role);
-    Ok(role_dir)
+    let hub_role_dir = cache_root
+        .map(|root| root.join(role))
+        .context("Failed to resolve HuggingFace cache root")?;
+    info!(
+        "✓ All {} model files ready (using Hub cache): {}",
+        role,
+        hub_role_dir.display()
+    );
+    Ok(hub_role_dir)
+}
+
+fn infer_repo_root(cached_path: &Path, repo_file: &str) -> Option<PathBuf> {
+    let mut root = cached_path.to_path_buf();
+    let depth = Path::new(repo_file).components().count();
+    for _ in 0..depth {
+        root = root.parent()?.to_path_buf();
+    }
+    Some(root)
+}
+
+fn predictor_files_for_quant() -> Vec<&'static str> {
+    let quant = std::env::var("QWEN3_TTS_QUANT").unwrap_or_else(|_| "q8".to_string());
+    let gguf = if quant.eq_ignore_ascii_case("q4") {
+        PREDICTOR_Q4_FILE
+    } else {
+        PREDICTOR_Q8_FILE
+    };
+    let mut files = vec![gguf];
+    files.extend_from_slice(PREDICTOR_EMBED_FILES);
+    files
 }

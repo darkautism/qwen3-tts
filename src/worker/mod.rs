@@ -761,22 +761,12 @@ fn detect_ort_lib() {
         "/usr/local/lib/libonnxruntime.so",
         "/usr/lib/aarch64-linux-gnu/libonnxruntime.so",
     ];
+
     for p in &paths {
         if Path::new(p).exists() {
             std::env::set_var("ORT_DYLIB_PATH", p);
             info!("Auto-detected ORT: {}", p);
             return;
-        }
-    }
-    // Try Python site-packages
-    if let Ok(output) = std::process::Command::new("python3")
-        .args(["-c", "import onnxruntime; import os; print(os.path.join(os.path.dirname(onnxruntime.__file__), 'capi', 'libonnxruntime.so'))"])
-        .output()
-    {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if Path::new(&path).exists() {
-            std::env::set_var("ORT_DYLIB_PATH", &path);
-            info!("Auto-detected ORT from Python: {}", path);
         }
     }
 }
