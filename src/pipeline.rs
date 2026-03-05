@@ -10,7 +10,7 @@ use crate::worker_client::{decode_i16, encode_f32, encode_i64, WorkerClient};
 pub enum ChunkMode {
     /// No splitting — synthesize entire text at once
     None,
-    /// Split every 2 punctuation marks (default)
+    /// Split every 2 punctuation marks
     Punct2,
     /// Split every 4 punctuation marks
     Punct4,
@@ -18,7 +18,7 @@ pub enum ChunkMode {
 
 impl Default for ChunkMode {
     fn default() -> Self {
-        ChunkMode::Punct2
+        ChunkMode::None
     }
 }
 

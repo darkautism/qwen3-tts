@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tracing::info;
+use uuid::Uuid;
 
 use crate::config::Config;
 use crate::pipeline::{ChunkMode, InlineVoiceData, Pipeline, SynthesisParams};
@@ -46,7 +47,7 @@ pub struct CreateSpeechRequest {
     pub language: Option<String>,
     /// Inline voice data (codec_tokens + ref_text) from web UI
     pub voice_data: Option<VoiceDataPayload>,
-    /// Text chunking mode: "none", "2" (default), "4"
+    /// Text chunking mode: "none" (default), "2", "4"
     pub chunk_mode: Option<String>,
 }
 
@@ -119,7 +120,7 @@ async fn create_speech(
     let chunk_mode = req
         .chunk_mode
         .as_deref()
-        .unwrap_or("2")
+        .unwrap_or("none")
         .parse::<ChunkMode>()
         .unwrap_or_default();
 
@@ -318,19 +319,21 @@ async fn encode_voice(
         }
     };
 
-    // Write to temp file, encode, clean up
-    let tmp_path = format!("/tmp/qwen3_encode_{}.wav", std::process::id());
+    // Write to a unique temp file (safe for concurrent requests), encode, then clean up.
+    let tmp_path = format!("/tmp/qwen3_encode_{}_{}.wav", std::process::id(), Uuid::new_v4());
     if let Err(e) = std::fs::write(&tmp_path, &audio_bytes) {
         let body = serde_json::json!({"error": format!("Failed to write temp file: {}", e)});
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
     }
 
     let result = tokio::task::spawn_blocking(move || {
-        let model_path = crate::speech_tokenizer::resolve_model_path("kautism/qwen3-tts-rk3588")?;
-        let tokenizer = crate::speech_tokenizer::SpeechTokenizer::load(&model_path)?;
-        let codes = tokenizer.encode_wav(&tmp_path)?;
+        let encode_result = (|| {
+            let model_path = crate::speech_tokenizer::resolve_model_path("kautism/qwen3-tts-rk3588")?;
+            let tokenizer = crate::speech_tokenizer::SpeechTokenizer::load(&model_path)?;
+            tokenizer.encode_wav(&tmp_path)
+        })();
         let _ = std::fs::remove_file(&tmp_path);
-        Ok::<_, anyhow::Error>(codes)
+        encode_result
     })
     .await;
 

@@ -143,9 +143,9 @@ impl McpServer {
                                     },
                                     "chunk_mode": {
                                         "type": "string",
-                                        "description": "Text chunking for long text: 'none' (no split), '2' (every 2 punctuation, default), '4' (every 4)",
+                                        "description": "Text chunking for long text: 'none' (no split, default), '2' (every 2 punctuation), '4' (every 4)",
                                         "enum": ["none", "2", "4"],
-                                        "default": "2"
+                                        "default": "none"
                                     }
                                 },
                                 "required": ["text"]
@@ -223,7 +223,7 @@ impl McpServer {
 
         let chunk_mode = args["chunk_mode"]
             .as_str()
-            .unwrap_or("2")
+            .unwrap_or("none")
             .parse::<ChunkMode>()
             .unwrap_or_default();
 

@@ -79,8 +79,8 @@ audio{width:100%;margin-top:8px;border-radius:8px}
       <option value="korean">Korean</option>
     </select>
     <select id="chunkSelect" class="lang-select" title="Text chunking for long text">
-      <option value="none">No split</option>
-      <option value="2" selected>2-punct</option>
+      <option value="none" selected>No split</option>
+      <option value="2">2-punct</option>
       <option value="4">4-punct</option>
     </select>
     <button class="icon-btn" onclick="openVoiceModal()" title="Create voice">＋</button>
@@ -439,7 +439,7 @@ async function synthesize() {
       body.voice_data = { codec_tokens: vd.codec_tokens, ref_text: vd.ref_text || null };
     }
     if (lang) body.language = lang;
-    if (chunk && chunk !== '2') body.chunk_mode = chunk;
+    if (chunk && chunk !== 'none') body.chunk_mode = chunk;
 
     status.textContent = 'Synthesizing...';
     const resp = await fetch('/v1/audio/speech', {

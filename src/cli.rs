@@ -34,8 +34,8 @@ pub enum Commands {
         #[arg(long)]
         max_tokens: Option<usize>,
 
-        /// Text chunking mode: none, 2 (default, split every 2 punctuation), 4
-        #[arg(long, default_value = "2")]
+        /// Text chunking mode: none (default), 2 (split every 2 punctuation), 4
+        #[arg(long, default_value = "none")]
         chunk: String,
     },
 

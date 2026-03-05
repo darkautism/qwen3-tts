@@ -145,8 +145,8 @@ impl Worker {
             "predictor" => {
                 let cp_dir = models_dir.join("code_predictor");
 
-                // Prefer ONNX compatibility path first (known-good baseline),
-                // then use GGUF backends when ONNX assets are not available.
+                // Prefer GGUF predictor path (same behavior as known-good baseline),
+                // and only fallback to ONNX when GGUF assets are unavailable.
                 let gguf_exists = [
                     "code-predictor-q8_0.gguf",
                     "code-predictor-q4_0.gguf",
@@ -161,19 +161,11 @@ impl Worker {
                 let onnx_data_path = cp_dir.join("code_predictor_core.onnx.data");
                 let weights_path = cp_dir.join("code_predictor_weights.npz");
                 let onnx_ready = onnx_path.exists() && weights_path.exists();
+                let force_onnx = std::env::var("QWEN3_TTS_FORCE_ONNX")
+                    .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                    .unwrap_or(false);
 
-                let code_pred = if onnx_ready {
-                    if !onnx_data_path.exists() {
-                        warn!(
-                            "ONNX external data file not found: {} (loading may fail if model references external data)",
-                            onnx_data_path.display()
-                        );
-                    }
-                    info!("Using ONNX code predictor (compatibility mode)");
-                    detect_ort_lib();
-                    let onnx = code_predictor::CodePredictor::load(&cp_dir)?;
-                    PredictorBackend::Onnx(onnx)
-                } else if gguf_exists {
+                let code_pred = if gguf_exists && !force_onnx {
                     #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
                     {
                         info!("Using GGML code predictor (optimized C backend)");
@@ -186,6 +178,20 @@ impl Worker {
                         let candle = code_predictor_candle::CodePredictorCandle::load(&cp_dir)?;
                         PredictorBackend::Candle(candle)
                     }
+                } else if onnx_ready {
+                    if force_onnx {
+                        warn!("QWEN3_TTS_FORCE_ONNX is set: forcing ONNX predictor path");
+                    }
+                    if !onnx_data_path.exists() {
+                        warn!(
+                            "ONNX external data file not found: {} (loading may fail if model references external data)",
+                            onnx_data_path.display()
+                        );
+                    }
+                    info!("Using ONNX code predictor (fallback mode)");
+                    detect_ort_lib();
+                    let onnx = code_predictor::CodePredictor::load(&cp_dir)?;
+                    PredictorBackend::Onnx(onnx)
                 } else {
                     anyhow::bail!(
                         "No predictor model found in {}. \

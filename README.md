@@ -74,10 +74,11 @@ Config note:
 | Worker | Function | Compute | Default Port |
 |--------|----------|---------|--------------|
 | **Talker** | Tokenizer + TextEmbedder + LLM | CPU | 9090 |
-| **Predictor** | CodePredictor (Candle GGUF Q8_0) + feedback embedding | CPU | 9091 |
+| **Predictor** | CodePredictor (Candle GGUF, default) + ONNX fallback + feedback embedding | CPU | 9091 |
 | **Vocoder** | Vocoder (ONNX FP32 CPU) | CPU | 9092 |
 
 Distributes workload across low-cost SBCs or any Linux machines. Token generation: ~5.5 tok/s with stripped code-predictor GGUF (default).
+Predictor backend default is GGUF (Candle/GGML path); ONNX is fallback/diagnostic only.
 
 ## Requirements
 
@@ -167,6 +168,72 @@ The Candle backend includes SDOT inline assembly optimization and benefits great
 RKNN vocoder trades audio quality for speed — INT8 quantization introduces audible artifacts.
 Predictor does **not** require ONNX and GGUF at the same time: it prefers GGUF (GGML/Candle), and only falls back to ONNX when GGUF is missing.
 
+### Enable GGML Features from Source
+
+`ggml-predictor` / `ggml-backend` require native C/C++ static libraries.  
+`build.rs` now auto-initializes and auto-builds them from `third_party/qwen3-tts.cpp` (submodule), so `cargo install --git` can build GGML mode directly.
+
+Requirements: `git`, `cmake`, C++ toolchain (`c++`), and `ar` (binutils).
+
+1) Recommended: one-command install (auto submodule + auto native build):
+
+```bash
+# Predictor only (talker stays Candle)
+cargo install --git "https://github.com/darkautism/qwen3-tts" \
+  --locked qwen3-tts-rs \
+  --features ggml-predictor
+
+# Talker + predictor on GGML
+cargo install --git "https://github.com/darkautism/qwen3-tts" \
+  --locked qwen3-tts-rs \
+  --features ggml-backend
+```
+
+`build.rs` will generate/check these artifacts automatically:
+
+```text
+$GGML_LIB_DIR/build/libcode_pred_ggml.a
+$GGML_LIB_DIR/build/libtts_transformer.a
+$GGML_LIB_DIR/ggml/build/src/libggml.a
+$GGML_LIB_DIR/ggml/build/src/libggml-cpu.a
+$GGML_LIB_DIR/ggml/build/src/libggml-base.a
+```
+
+2) Optional override: use your own `qwen3-tts.cpp` source tree:
+
+```bash
+export GGML_LIB_DIR="$HOME/qwen3_research/qwen3-tts.cpp"
+git clone --recursive https://github.com/predict-woo/qwen3-tts.cpp "$GGML_LIB_DIR"
+
+# build.rs will use GGML_LIB_DIR and build missing native libs
+cargo build --release --features ggml-predictor
+```
+
+3) (Only for `ggml-backend`) Build `llama_wrapper.so` from `llama.cpp` source:
+
+```bash
+git clone https://github.com/ggml-org/llama.cpp "$HOME/llama.cpp"
+cmake -S "$HOME/llama.cpp" -B "$HOME/llama.cpp/build" -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build "$HOME/llama.cpp/build" -j
+
+cd /path/to/qwen3-tts
+gcc -shared -fPIC -O3 scripts/llama_wrapper.c \
+  -I"$HOME/llama.cpp/include" \
+  -I"$HOME/llama.cpp/ggml/include" \
+  -L"$HOME/llama.cpp/build/bin" \
+  -lllama -lggml -lggml-base -lggml-cpu \
+  -Wl,-rpath,"$HOME/llama.cpp/build/bin" \
+  -o llama_wrapper.so
+sudo install -m 0755 llama_wrapper.so /usr/lib/llama_wrapper.so
+```
+
+4) Runtime check:
+
+```bash
+qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
+# Expect log: "Using GGML code predictor (optimized C backend)"
+```
+
 ## Quick Start
 
 ### Initialize Configuration
@@ -207,6 +274,8 @@ qwen3-tts speak "Hello world" -o speech.wav --lang english
 # Voice cloning (custom voice file)
 qwen3-tts speak "你好" --voice my_voice.json -o clone.wav
 ```
+
+> Default chunk mode is `none` (no text splitting). Use `--chunk 2` or `--chunk 4` only when you explicitly want punctuation-based chunking.
 
 ## Voice Cloning
 
@@ -338,6 +407,7 @@ qwen3-tts "你好世界"
 | `qwen3-tts speak "text" -o file.wav` | Specify output file |
 | `qwen3-tts speak "text" --lang english` | Specify language |
 | `qwen3-tts speak "text" --voice voice.json` | Voice cloning |
+| `qwen3-tts speak "text" --chunk none` | No text split (default mode) |
 | `qwen3-tts encode-voice -a ref.wav -r "text" -o voice.json` | Create voice profile (native ARM64) |
 | `qwen3-tts serve --port 8080` | Start OpenAI-compatible API server |
 | `qwen3-tts mcp` | Start MCP server (stdio) |
@@ -362,6 +432,7 @@ Open `http://<server-ip>:8080` in a browser. The built-in web UI provides:
 - **Text input** with Ctrl+Enter to synthesize
 - **Voice selector** dropdown — populated from 500+ voices on [HuggingFace](https://huggingface.co/kautism/qwen3_tts_voices_json), grouped by game/character
 - **Language selector** (Chinese, English, Japanese, Korean)
+- **Chunk selector** (`none` default, optional `2` / `4`)
 - **Audio playback** directly in browser
 
 No installation required — pure HTML/JS, served by the same binary.
@@ -389,6 +460,7 @@ Supported parameters:
 | `input` | string | (required) | Text to synthesize |
 | `voice` | string | `"default"` | Voice file path (`.json`/`.npy`/`.pt`) |
 | `language` | string | `"chinese"` | Language |
+| `chunk_mode` | string | `"none"` | Text chunking mode (`none`, `2`, `4`) |
 | `model` | string | `"qwen3-tts"` | Model name |
 | `response_format` | string | `"wav"` | Output format |
 
