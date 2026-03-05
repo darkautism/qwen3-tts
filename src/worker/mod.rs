@@ -145,7 +145,8 @@ impl Worker {
             "predictor" => {
                 let cp_dir = models_dir.join("code_predictor");
 
-                // Try GGML C (ggml-backend feature) → Candle GGUF → ONNX (fallback)
+                // Prefer ONNX compatibility path first (known-good baseline),
+                // then use GGUF backends when ONNX assets are not available.
                 let gguf_exists = [
                     "code-predictor-q8_0.gguf",
                     "code-predictor-q4_0.gguf",
@@ -156,7 +157,23 @@ impl Worker {
                 .iter()
                 .any(|f| cp_dir.join(f).exists());
 
-                let code_pred = if gguf_exists {
+                let onnx_path = cp_dir.join("code_predictor_core.onnx");
+                let onnx_data_path = cp_dir.join("code_predictor_core.onnx.data");
+                let weights_path = cp_dir.join("code_predictor_weights.npz");
+                let onnx_ready = onnx_path.exists() && weights_path.exists();
+
+                let code_pred = if onnx_ready {
+                    if !onnx_data_path.exists() {
+                        warn!(
+                            "ONNX external data file not found: {} (loading may fail if model references external data)",
+                            onnx_data_path.display()
+                        );
+                    }
+                    info!("Using ONNX code predictor (compatibility mode)");
+                    detect_ort_lib();
+                    let onnx = code_predictor::CodePredictor::load(&cp_dir)?;
+                    PredictorBackend::Onnx(onnx)
+                } else if gguf_exists {
                     #[cfg(any(feature = "ggml-backend", feature = "ggml-predictor"))]
                     {
                         info!("Using GGML code predictor (optimized C backend)");
@@ -170,21 +187,12 @@ impl Worker {
                         PredictorBackend::Candle(candle)
                     }
                 } else {
-                    let onnx_path = cp_dir.join("code_predictor_core.onnx");
-                    let onnx_data_path = cp_dir.join("code_predictor_core.onnx.data");
-                    let weights_path = cp_dir.join("code_predictor_weights.npz");
-                    if !onnx_path.exists() || !onnx_data_path.exists() || !weights_path.exists() {
-                        anyhow::bail!(
-                            "No GGUF predictor model found in {} and ONNX fallback assets are missing. \
-Expected GGUF: code-predictor-q8_0.gguf / code-predictor-q4_0.gguf. \
-Expected ONNX fallback: code_predictor_core.onnx + code_predictor_core.onnx.data + code_predictor_weights.npz",
-                            cp_dir.display()
-                        );
-                    }
-                    info!("Falling back to ONNX code predictor");
-                    detect_ort_lib();
-                    let onnx = code_predictor::CodePredictor::load(&cp_dir)?;
-                    PredictorBackend::Onnx(onnx)
+                    anyhow::bail!(
+                        "No predictor model found in {}. \
+Expected ONNX: code_predictor_core.onnx + code_predictor_weights.npz (plus optional code_predictor_core.onnx.data). \
+Or GGUF: code-predictor-q8_0.gguf / code-predictor-q4_0.gguf",
+                        cp_dir.display()
+                    );
                 };
 
                 // Load codec_embedding and tts_pad_embed for feedback computation
