@@ -93,18 +93,37 @@ Inference core (Talker, Predictor) uses Candle (pure Rust) — **no external lib
 
 | Library | Source | Install Path |
 |---------|--------|-------------|
-| `libonnxruntime.so` | `pip install onnxruntime` (auto-detected) | Python package or system path |
+| `libonnxruntime.so` | `uv pip install onnxruntime` or `uv pip install onnxruntime-gpu` | System path or `ORT_DYLIB_PATH` |
 
 ### Installing ONNX Runtime (Vocoder Machine)
 
 ```bash
-# Easiest: via Python package (auto-detected by the binary)
-pip install onnxruntime
+# CPU (uv)
+uv pip install onnxruntime
 
-# Or manual system install
-# Download aarch64 build: https://github.com/microsoft/onnxruntime/releases
-sudo cp libonnxruntime.so /usr/lib/
+# CUDA (uv, GPU build)
+uv pip install onnxruntime-gpu
+
+# uvx alternative
+uvx pip install onnxruntime
+uvx pip install onnxruntime-gpu
+
+# If the library isn't on your system path, set ORT_DYLIB_PATH
+export ORT_DYLIB_PATH=/path/to/libonnxruntime.so
 ```
+
+> With `--features onnx-cuda`, install **both** CUDA Toolkit and cuDNN, otherwise CUDA EP initialization will fail.
+
+#### Manual package from ONNX Runtime v1.24.2
+
+Download from:
+`https://github.com/microsoft/onnxruntime/releases/tag/v1.24.2`
+
+After extracting, point `ORT_DYLIB_PATH` to the runtime library:
+- **Linux x64 GPU**: `.../onnxruntime-linux-x64-gpu-1.24.2/lib/libonnxruntime.so`
+- **Linux aarch64 CPU**: `.../onnxruntime-linux-aarch64-1.24.2/lib/libonnxruntime.so`
+
+You can also place `libonnxruntime.so` in a standard library search path.
 
 ### (Optional) RKNN NPU Acceleration
 
@@ -123,6 +142,9 @@ sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/r
 # Standard build (Candle inference + ONNX FP32 vocoder — pure Rust, no extra .so)
 cargo build --release
 
+# CUDA ONNX (vocoder + ONNX predictor on GPU)
+cargo build --release --features onnx-cuda
+
 # RKNN INT8 vocoder (Rockchip NPU only — faster but introduces quantization noise)
 cargo build --release --features rknn-vocoder
 # Output: target/release/qwen3-tts (~15-20 MB)
@@ -135,6 +157,7 @@ cargo build --release --features rknn-vocoder
 | Feature | Description | Extra Dependencies | Performance |
 |---------|-------------|-------------------|-------------|
 | (default) | Candle inference + ONNX vocoder | `libonnxruntime.so` | **~5.5 tok/s** |
+| `onnx-cuda` | ONNX CUDA EP for vocoder + ONNX predictor | `onnxruntime-gpu` + CUDA/cuDNN | GPU-dependent |
 | `ggml-predictor` | C++ GGML code predictor | Static `.a` libs | Slower than Candle |
 | `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ has noise |
 
@@ -164,7 +187,8 @@ qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
-> Models download to `~/.local/share/qwen3-tts/models/{role}/` by default.
+> qwen3-tts resolves role files from HuggingFace Hub cache paths (from `hf-hub` `repo.get(...)`).
+> It only falls back to local `~/.local/share/qwen3-tts/models/{role}/` if Hub resolution fails and local files are complete.
 > Custom HF repo: `--repo your-name/your-repo`
 > For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
 > On big.LITTLE SoCs (RK3588), big-core pinning is enabled by default (no extra flag required).
@@ -466,7 +490,7 @@ kautism/qwen3-tts-rk3588/
 ```
 
 Workers auto-download their role's models from HuggingFace Hub on first start.
-Pass `--quant q4` to predictor workers to also download the Q4 model (169MB, ~16% faster).
+Pass `--quant q4` to predictor workers to download/use only the Q4 predictor GGUF (169MB, ~16% faster).
 
 ## Supported Languages
 

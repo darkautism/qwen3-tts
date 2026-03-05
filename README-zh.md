@@ -62,18 +62,37 @@ We have WebUI Now!
 
 | 函式庫 | 來源 | 安裝路徑 |
 |--------|------|----------|
-| `libonnxruntime.so` | `pip install onnxruntime` (自動偵測) | Python 套件或系統路徑 |
+| `libonnxruntime.so` | `uv pip install onnxruntime` 或 `uv pip install onnxruntime-gpu` | 系統路徑或 `ORT_DYLIB_PATH` |
 
 ### 安裝 ONNX Runtime (Vocoder 機器)
 
 ```bash
-# 最簡方式：透過 Python 套件 (程式會自動偵測)
-pip install onnxruntime
+# CPU (uv)
+uv pip install onnxruntime
 
-# 或手動安裝到系統路徑
-# 下載 aarch64 版本: https://github.com/microsoft/onnxruntime/releases
-sudo cp libonnxruntime.so /usr/lib/
+# CUDA (uv, GPU 版)
+uv pip install onnxruntime-gpu
+
+# uvx 替代方案
+uvx pip install onnxruntime
+uvx pip install onnxruntime-gpu
+
+# 若未在系統路徑內，請設定 ORT_DYLIB_PATH
+export ORT_DYLIB_PATH=/path/to/libonnxruntime.so
 ```
+
+> 使用 `--features onnx-cuda` 時，**CUDA Toolkit 與 cuDNN 都要安裝**，缺一個都會導致 CUDA EP 初始化失敗。
+
+#### 從 ONNX Runtime v1.24.2 手動下載
+
+下載頁面：
+`https://github.com/microsoft/onnxruntime/releases/tag/v1.24.2`
+
+解壓後，把 `ORT_DYLIB_PATH` 指到動態函式庫：
+- **Linux x64 GPU**：`.../onnxruntime-linux-x64-gpu-1.24.2/lib/libonnxruntime.so`
+- **Linux aarch64 CPU**：`.../onnxruntime-linux-aarch64-1.24.2/lib/libonnxruntime.so`
+
+也可以把 `libonnxruntime.so` 放到系統動態函式庫搜尋路徑。
 
 ### (選用) RKNN NPU 加速
 
@@ -92,6 +111,9 @@ sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/r
 # 標準編譯 (Candle 推理 + ONNX FP32 vocoder — 純 Rust，無額外 .so)
 cargo build --release
 
+# CUDA ONNX (vocoder + ONNX predictor 使用 GPU)
+cargo build --release --features onnx-cuda
+
 # 使用 RKNN INT8 vocoder (僅 Rockchip NPU — 較快但有量化雜音)
 cargo build --release --features rknn-vocoder
 # 產出: target/release/qwen3-tts (~15-20 MB)
@@ -104,6 +126,7 @@ cargo build --release --features rknn-vocoder
 | Feature | 說明 | 額外依賴 | 效能 |
 |---------|------|----------|------|
 | (預設) | Candle 推理 + ONNX vocoder | `libonnxruntime.so` | **~5.5 tok/s** |
+| `onnx-cuda` | ONNX CUDA EP (vocoder + ONNX predictor) | `onnxruntime-gpu` + CUDA/cuDNN | 依 GPU 而定 |
 | `ggml-predictor` | C++ GGML code predictor | 靜態 `.a` 庫 | 比 Candle 慢 |
 | `rknn-vocoder` | RKNN INT8 vocoder (Rockchip NPU) | `librknnrt.so` + RKNPU kernel | ⚠️ 有雜音 |
 
@@ -116,7 +139,7 @@ RKNN vocoder 以音質換取速度 — INT8 量化會引入可聽見的雜音。
 ### 初始化配置
 
 ```bash
-# 產生 qwen3-tts.toml，設定你的 Worker IP
+# 產生 ~/.config/qwen3-tts/config.toml，設定你的 Worker IP
 qwen3-tts init --talker-ip <IP1> --predictor-ip <IP2> --vocoder-ip <IP2>
 ```
 
@@ -133,7 +156,8 @@ qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
-> 模型預設下載到 `~/.local/share/qwen3-tts/models/{role}/`
+> qwen3-tts 會優先使用 HuggingFace Hub cache 路徑（由 `hf-hub` `repo.get(...)` 回傳）。
+> 只有在 Hub 解析失敗且本地 `~/.local/share/qwen3-tts/models/{role}/` 檔案完整時，才回退到本地檔案。
 > 自定義 HF repo: `--repo your-name/your-repo`
 > 指定 CPU 核心: `--cores 4-7` 或 `--cores 4,5,6,7`
 > 在 big.LITTLE SoC（RK3588）上，預設已啟用大核心綁定，不需要額外參數。
@@ -437,7 +461,7 @@ kautism/qwen3-tts-rk3588/
 ```
 
 Worker 啟動時會自動從 HuggingFace Hub 下載對應角色的模型。
-Predictor 搭配 `--quant q4` 可額外下載 Q4 模型 (169MB，快 ~16%)。
+Predictor 使用 `--quant q4` 時只會下載/使用 Q4 predictor GGUF (169MB，快 ~16%)。
 
 ## 支援語言
 
