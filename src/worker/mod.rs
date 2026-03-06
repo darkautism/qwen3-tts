@@ -312,6 +312,15 @@ Or GGUF: code-predictor-q8_0.gguf / code-predictor-q4_0.gguf",
         let target_ids: Vec<usize> = encoding.get_ids().iter().map(|&id| id as usize).collect();
         info!("Tokenized {} → {} tokens", text.len(), target_ids.len());
 
+        // Pitfall guard:
+        // Keep legacy-icl as default so voice JSON with ref_text continues to
+        // align with user expectation and prior API behavior. Use env override
+        // only for explicit diagnostics/experiments.
+        let clone_mode = std::env::var("QWEN3_TTS_CLONE_MODE")
+            .unwrap_or_else(|_| "legacy-icl".to_string())
+            .to_ascii_lowercase();
+        let use_legacy_icl = matches!(clone_mode.as_str(), "legacy" | "legacy-icl" | "icl");
+
         let prefix = if let Some(ref_input) = ref_tokens {
             match ref_input {
                 RefCodecTokens::Loaded => {
@@ -319,28 +328,50 @@ Or GGUF: code-predictor-q8_0.gguf / code-predictor-q4_0.gguf",
                         .ref_codec_tokens
                         .as_ref()
                         .context("No voice reference loaded")?;
-                    // Prepend ref_text tokens for ICL if available
-                    let all_ids = if let Some(ref ref_text) = ts.ref_text {
-                        let ref_enc = ts
-                            .tokenizer
-                            .encode(ref_text.as_str(), false)
-                            .map_err(|e| anyhow::anyhow!("Tokenize ref_text: {}", e))?;
-                        let ref_ids: Vec<usize> =
-                            ref_enc.get_ids().iter().map(|&id| id as usize).collect();
-                        info!("Prepending ref_text ({} tokens) for ICL", ref_ids.len());
-                        let mut combined = ref_ids;
-                        combined.extend_from_slice(&target_ids);
-                        combined
+
+                    if use_legacy_icl {
+                        // Legacy ICL mode: prepend ref_text tokens if available.
+                        let all_ids = if let Some(ref ref_text) = ts.ref_text {
+                            let ref_enc = ts
+                                .tokenizer
+                                .encode(ref_text.as_str(), false)
+                                .map_err(|e| anyhow::anyhow!("Tokenize ref_text: {}", e))?;
+                            let ref_ids: Vec<usize> =
+                                ref_enc.get_ids().iter().map(|&id| id as usize).collect();
+                            info!(
+                                "Clone mode=legacy-icl; prepending ref_text ({} tokens)",
+                                ref_ids.len()
+                            );
+                            let mut combined = ref_ids;
+                            combined.extend_from_slice(&target_ids);
+                            combined
+                        } else {
+                            target_ids.clone()
+                        };
+                        ts.embedder
+                            .build_prefix_with_ref(&all_ids, ref_toks, language)?
                     } else {
-                        target_ids.clone()
-                    };
-                    ts.embedder
-                        .build_prefix_with_ref(&all_ids, ref_toks, language)
+                        if let Some(ref ref_text) = ts.ref_text {
+                            info!(
+                                "Clone mode=speaker; ref_text present ({} chars) but text stream keeps target-only",
+                                ref_text.chars().count()
+                            );
+                        } else {
+                            info!("Clone mode=speaker; no ref_text");
+                        }
+                        ts.embedder
+                            .build_prefix_with_ref_speaker(&target_ids, ref_toks, language)?
+                    }
                 }
                 RefCodecTokens::Inline(raw) => {
                     let ref_toks = decode_i64_array2_bytes(raw, 16)?;
-                    ts.embedder
-                        .build_prefix_with_ref(&target_ids, &ref_toks, language)
+                    if use_legacy_icl {
+                        ts.embedder
+                            .build_prefix_with_ref(&target_ids, &ref_toks, language)?
+                    } else {
+                        ts.embedder
+                            .build_prefix_with_ref_speaker(&target_ids, &ref_toks, language)?
+                    }
                 }
             }
         } else {

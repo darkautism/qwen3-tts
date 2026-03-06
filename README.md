@@ -302,8 +302,14 @@ Voice file format (`.json`):
 }
 ```
 
-> `ref_text` enables In-Context Learning (ICL), aligning reference audio with text for better cloning quality.
-> Legacy `.npy` and `.pt` files are also supported (no ref_text, lower quality).
+> Voice cloning now defaults to **ref_text ICL conditioning** when `ref_text` is provided in the voice JSON.
+> If you want speaker-only conditioning instead, set `QWEN3_TTS_CLONE_MODE=speaker` on worker processes.
+> Legacy `.npy` and `.pt` files are also supported.
+
+Clone stability note:
+- For `ref_text` ICL mode, talker should log  
+  `Loaded 15 code predictor codec embeddings ... code_predictor_weights.npz`.
+- If this line is missing, clone intelligibility may regress; check model layout and worker logs before benchmarking.
 
 Voice encoding uses a native Candle (Rust ML) implementation of the Mimi Speech Tokenizer —
 processes ~4s of audio in ~2s, entirely on CPU.

@@ -271,8 +271,14 @@ qwen3-tts speak "要合成的新文字" --voice my_voice.json -o output.wav
 }
 ```
 
-> `ref_text` 用於 In-Context Learning (ICL)，讓模型對齊參考音訊與文字，提升克隆品質。
-> 也支援舊格式 `.npy` 和 `.pt` 檔案 (無 ref_text，品質較低)。
+> 目前聲音克隆在 voice JSON 帶有 `ref_text` 時，預設使用 **ref_text ICL conditioning**。
+> 若想改用 speaker-only conditioning，可在 worker 設定 `QWEN3_TTS_CLONE_MODE=speaker`。
+> 也支援舊格式 `.npy` 和 `.pt` 檔案。
+
+克隆穩定性注意事項：
+- `ref_text` ICL 模式下，talker 啟動日誌應出現  
+  `Loaded 15 code predictor codec embeddings ... code_predictor_weights.npz`。
+- 若沒有這行，克隆文字可辨識度可能明顯下降；請先檢查模型路徑與 worker 日誌再做 benchmark。
 
 語音編碼使用原生 Candle (Rust ML 框架) 實作的 Mimi Speech Tokenizer，
 約 2 秒即可處理 4 秒音訊，完全在 CPU 上運行。

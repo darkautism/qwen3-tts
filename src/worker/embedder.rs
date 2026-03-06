@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use ndarray::{Array1, Array2};
-use ndarray_npy::read_npy;
-use std::path::Path;
+use ndarray_npy::{read_npy, NpzReader};
+use std::path::{Path, PathBuf};
 
 use super::sampling;
 
@@ -13,6 +13,7 @@ const IM_START_TOKEN_ID: usize = 151644;
 
 const CODEC_BOS_ID: usize = 2149;
 const CODEC_PAD_ID: usize = 2148;
+const CODEC_THINK_ID: usize = 2154;
 const CODEC_NOTHINK_ID: usize = 2155;
 const CODEC_THINK_BOS_ID: usize = 2156;
 const CODEC_THINK_EOS_ID: usize = 2157;
@@ -36,6 +37,101 @@ pub struct TextEmbedder {
 }
 
 impl TextEmbedder {
+    fn checked_code_index(
+        code_token: i64,
+        n_rows: usize,
+        i: usize,
+        j: usize,
+        table_name: &str,
+    ) -> Result<usize> {
+        if code_token < 0 {
+            anyhow::bail!(
+                "Negative codec token {} at frame={}, group={} for {}",
+                code_token,
+                i,
+                j,
+                table_name
+            );
+        }
+        let code = code_token as usize;
+        if code >= n_rows {
+            anyhow::bail!(
+                "Out-of-range codec token {} at frame={}, group={} for {} (rows={})",
+                code,
+                i,
+                j,
+                table_name,
+                n_rows
+            );
+        }
+        Ok(code)
+    }
+
+    // Pitfall guard:
+    // Legacy ref_text ICL needs per-group predictor embeddings (codec_emb_0..14).
+    // If we silently miss these and reuse talker codec_embedding for all groups,
+    // clone text intelligibility regresses badly. Keep this loader strict.
+    fn load_cp_codec_embeddings_from_npz(npz_path: &Path) -> Result<Vec<Array2<f32>>> {
+        let file = std::fs::File::open(npz_path)
+            .with_context(|| format!("open {}", npz_path.display()))?;
+        let mut npz = NpzReader::new(file)
+            .with_context(|| format!("read npz {}", npz_path.display()))?;
+        let mut out = Vec::with_capacity(15);
+        for i in 0..15 {
+            let key = format!("codec_emb_{}", i);
+            let emb: Array2<f32> = npz
+                .by_name(&key)
+                .with_context(|| format!("{} in {}", key, npz_path.display()))?;
+            if emb.shape() != [2048, 1024] {
+                anyhow::bail!(
+                    "Unexpected shape for {} in {}: {:?}",
+                    key,
+                    npz_path.display(),
+                    emb.shape()
+                );
+            }
+            out.push(emb);
+        }
+        Ok(out)
+    }
+
+    fn cp_embedding_npz_candidates(emb_dir: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        if let Some(talker_dir) = emb_dir.parent() {
+            out.push(talker_dir.join("code_predictor").join("code_predictor_weights.npz"));
+            if let Some(root) = talker_dir.parent() {
+                out.push(
+                    root.join("predictor")
+                        .join("code_predictor")
+                        .join("code_predictor_weights.npz"),
+                );
+                out.push(
+                    root.join("predictor")
+                        .join("predictor")
+                        .join("code_predictor")
+                        .join("code_predictor_weights.npz"),
+                );
+            }
+        }
+        out
+    }
+
+    fn codec_language_id(language: &str) -> Option<usize> {
+        match language.to_ascii_lowercase().as_str() {
+            "en" | "english" => Some(2050),
+            "zh" | "chinese" => Some(2055),
+            "ja" | "japanese" => Some(2058),
+            "ko" | "korean" => Some(2064),
+            "de" | "german" => Some(2053),
+            "fr" | "french" => Some(2061),
+            "es" | "spanish" => Some(2054),
+            "ru" | "russian" => Some(2069),
+            "it" | "italian" => Some(2070),
+            "pt" | "portuguese" => Some(2071),
+            _ => None,
+        }
+    }
+
     pub fn load(emb_dir: &Path) -> Result<Self> {
         tracing::info!("Loading embeddings from {}...", emb_dir.display());
 
@@ -75,10 +171,44 @@ impl TextEmbedder {
                 break;
             }
         }
+        if cp_codec_embeddings.is_empty() {
+            // Backward-compatibility fallback for model layouts where
+            // cp_codec_emb_*.npy are not exported under talker/embeddings/.
+            // We resolve predictor npz and pull codec_emb_0..14 from there.
+            for npz_path in Self::cp_embedding_npz_candidates(emb_dir) {
+                if !npz_path.exists() {
+                    continue;
+                }
+                match Self::load_cp_codec_embeddings_from_npz(&npz_path) {
+                    Ok(embs) => {
+                        tracing::info!(
+                            "Loaded {} code predictor codec embeddings from {}",
+                            embs.len(),
+                            npz_path.display()
+                        );
+                        cp_codec_embeddings = embs;
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to load cp codec embeddings from {}: {err:#}",
+                            npz_path.display()
+                        );
+                    }
+                }
+            }
+        }
+
         if !cp_codec_embeddings.is_empty() {
             tracing::info!(
                 "Loaded {} code predictor codec embeddings for ICL",
                 cp_codec_embeddings.len()
+            );
+        } else {
+            // We keep this warning loud because this fallback path is known to
+            // produce unstable clone text on ref_text ICL workloads.
+            tracing::warn!(
+                "Code predictor codec embeddings unavailable; legacy ICL will fallback to shared codec embedding"
             );
         }
 
@@ -183,6 +313,124 @@ impl TextEmbedder {
         ]
     }
 
+    /// Estimate a speaker embedding from reference codec tokens by averaging
+    /// per-group codec embeddings across all reference frames.
+    fn estimate_speaker_embedding(&self, ref_codec_tokens: &Array2<i64>) -> Result<Array1<f32>> {
+        let n_ref = ref_codec_tokens.nrows();
+        let n_groups = ref_codec_tokens.ncols().min(16);
+        let have_cp_embs = self.cp_codec_embeddings.len() >= 15;
+        let mut acc = Array1::<f32>::zeros(HIDDEN_SIZE);
+        let mut count = 0usize;
+
+        for i in 0..n_ref {
+            for j in 0..n_groups {
+                let code_token = ref_codec_tokens[[i, j]];
+                if j == 0 {
+                    let code = Self::checked_code_index(
+                        code_token,
+                        self.codec_embedding.nrows(),
+                        i,
+                        j,
+                        "talker.codec_embedding",
+                    )?;
+                    acc += &self.codec_embedding.row(code);
+                } else if have_cp_embs {
+                    let table = &self.cp_codec_embeddings[j - 1];
+                    let code = Self::checked_code_index(
+                        code_token,
+                        table.nrows(),
+                        i,
+                        j,
+                        "predictor.codec_emb",
+                    )?;
+                    acc += &table.row(code);
+                } else {
+                    let code = Self::checked_code_index(
+                        code_token,
+                        self.codec_embedding.nrows(),
+                        i,
+                        j,
+                        "talker.codec_embedding(fallback)",
+                    )?;
+                    acc += &self.codec_embedding.row(code);
+                }
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            acc.mapv_inplace(|v| v / count as f32);
+        }
+        Ok(acc)
+    }
+
+    /// Build clone prefix in speaker-only mode (x_vector-like conditioning).
+    ///
+    /// This keeps text prompt focused on target text and conditions voice using
+    /// a compact speaker embedding estimated from reference codec tokens.
+    pub fn build_prefix_with_ref_speaker(
+        &self,
+        text_token_ids: &[usize],
+        ref_codec_tokens: &Array2<i64>,
+        language: &str,
+    ) -> Result<Array2<f32>> {
+        // Role: <|im_start|> assistant \n
+        let role_embeds = self.embed_text(&[IM_START_TOKEN_ID, 77091, 198]);
+
+        // Language-aware THINK prefix, aligned with qwen3-tts.cpp style prompting.
+        let codec_special: Vec<usize> = if let Some(lang_id) = Self::codec_language_id(language) {
+            vec![
+                CODEC_THINK_ID,
+                CODEC_THINK_BOS_ID,
+                lang_id,
+                CODEC_THINK_EOS_ID,
+            ]
+        } else {
+            vec![CODEC_NOTHINK_ID, CODEC_THINK_BOS_ID, CODEC_THINK_EOS_ID]
+        };
+        let mut dual_codec = Array2::<f32>::zeros((codec_special.len(), HIDDEN_SIZE));
+        for (i, &id) in codec_special.iter().enumerate() {
+            let sum = &self.tts_pad_embed + &self.codec_embedding.row(id);
+            dual_codec.row_mut(i).assign(&sum);
+        }
+
+        // Speaker token: tts_pad + estimated speaker embedding.
+        let speaker = self.estimate_speaker_embedding(ref_codec_tokens)?;
+        let speaker_tok = (&self.tts_pad_embed + &speaker).insert_axis(ndarray::Axis(0));
+
+        // Transition: tts_bos + codec_pad
+        let transition = (&self.tts_bos_embed + &self.codec_embedding.row(CODEC_PAD_ID))
+            .insert_axis(ndarray::Axis(0));
+
+        // Text stream: target_text + eos, both over codec_pad.
+        let text_embeds = self.embed_text(text_token_ids);
+        let n_text = text_token_ids.len();
+        let mut dual_text = Array2::<f32>::zeros((n_text + 1, HIDDEN_SIZE));
+        let codec_pad = self.codec_embedding.row(CODEC_PAD_ID);
+        for i in 0..n_text {
+            dual_text
+                .row_mut(i)
+                .assign(&(&text_embeds.row(i) + &codec_pad));
+        }
+        dual_text
+            .row_mut(n_text)
+            .assign(&(&self.tts_eos_embed + &codec_pad));
+
+        // Final: tts_pad + codec_bos
+        let final_tok = (&self.tts_pad_embed + &self.codec_embedding.row(CODEC_BOS_ID))
+            .insert_axis(ndarray::Axis(0));
+
+        Ok(ndarray::concatenate![
+            ndarray::Axis(0),
+            role_embeds,
+            dual_codec,
+            speaker_tok,
+            transition,
+            dual_text,
+            final_tok
+        ])
+    }
+
     /// Build prefix with reference audio for voice cloning (ICL mode, non-streaming).
     ///
     /// Official structure (non_streaming_mode):
@@ -196,7 +444,7 @@ impl TextEmbedder {
         text_token_ids: &[usize],
         ref_codec_tokens: &Array2<i64>,
         _language: &str,
-    ) -> Array2<f32> {
+    ) -> Result<Array2<f32>> {
         // Phase 1: Role prefix (text-only, 3 positions)
         let role_embeds = self.embed_text(&[IM_START_TOKEN_ID, 77091, 198]);
 
@@ -235,15 +483,37 @@ impl TextEmbedder {
         for i in 0..n_ref {
             let mut sum = self.tts_pad_embed.clone();
             for j in 0..n_groups {
-                let code = ref_codec_tokens[[i, j]] as usize;
+                let code_token = ref_codec_tokens[[i, j]];
                 if j == 0 {
                     // Group 0: main codec_embedding
+                    let code = Self::checked_code_index(
+                        code_token,
+                        self.codec_embedding.nrows(),
+                        i,
+                        j,
+                        "talker.codec_embedding",
+                    )?;
                     sum = sum + &self.codec_embedding.row(code);
                 } else if have_cp_embs {
                     // Groups 1-15: code_predictor per-group embeddings
-                    sum = sum + &self.cp_codec_embeddings[j - 1].row(code);
+                    let table = &self.cp_codec_embeddings[j - 1];
+                    let code = Self::checked_code_index(
+                        code_token,
+                        table.nrows(),
+                        i,
+                        j,
+                        "predictor.codec_emb",
+                    )?;
+                    sum = sum + &table.row(code);
                 } else {
                     // Fallback: use main codec_embedding (wrong but backward compatible)
+                    let code = Self::checked_code_index(
+                        code_token,
+                        self.codec_embedding.nrows(),
+                        i,
+                        j,
+                        "talker.codec_embedding(fallback)",
+                    )?;
                     sum = sum + &self.codec_embedding.row(code);
                 }
             }
@@ -252,7 +522,7 @@ impl TextEmbedder {
 
         let bos_row = bos_embed.insert_axis(ndarray::Axis(0));
 
-        ndarray::concatenate![
+        Ok(ndarray::concatenate![
             ndarray::Axis(0),
             role_embeds,
             dual_codec,
@@ -260,7 +530,7 @@ impl TextEmbedder {
             text_stream,
             bos_row,
             ref_embeds
-        ]
+        ])
     }
 
     /// Sample code_0 from hidden state
