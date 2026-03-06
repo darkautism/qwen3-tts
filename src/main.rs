@@ -7,7 +7,7 @@ use tracing::info;
 use qwen3_tts_rs::api;
 use qwen3_tts_rs::audio;
 use qwen3_tts_rs::cli::{Cli, Commands, WorkerRole};
-use qwen3_tts_rs::config::Config;
+use qwen3_tts_rs::config::{default_config_dir, Config};
 use qwen3_tts_rs::mcp;
 use qwen3_tts_rs::pipeline::{Pipeline, SynthesisParams};
 use qwen3_tts_rs::voices;
@@ -334,11 +334,7 @@ async fn cmd_init(
     predictor_ip: String,
     vocoder_ip: Option<String>,
 ) -> Result<()> {
-    let config_dir = std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
-        .join(".config")
-        .join("qwen3-tts");
+    let config_dir = default_config_dir();
     std::fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join("config.toml");
 
