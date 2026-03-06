@@ -40,9 +40,9 @@ const VOCODER_FILES: &[&str] = &["vocoder/vocoder.onnx"];
 
 /// Download models for a specific role from HuggingFace Hub.
 /// Returns the path to the role's model directory.
-pub fn ensure_models(role: &str, models_dir: &Path, repo_id: Option<&str>) -> Result<PathBuf> {
+pub fn ensure_models(role: &str, models_dir: Option<&Path>, repo_id: Option<&str>) -> Result<PathBuf> {
     let repo = repo_id.unwrap_or(DEFAULT_REPO);
-    let role_dir = models_dir.join(role);
+    let local_role_dir = models_dir.map(|dir| dir.join(role));
 
     let files: Vec<&str> = match role {
         "talker" => TALKER_FILES.to_vec(),
@@ -51,7 +51,9 @@ pub fn ensure_models(role: &str, models_dir: &Path, repo_id: Option<&str>) -> Re
         _ => anyhow::bail!("Unknown role: {}", role),
     };
 
-    let local_complete = files.iter().all(|f| models_dir.join(f).exists());
+    let local_complete = models_dir
+        .map(|dir| files.iter().all(|f| dir.join(f).exists()))
+        .unwrap_or(false);
     info!("Resolving {} model files from HF Hub cache ({})...", role, repo);
 
     let api = Api::new().context("Initialize HuggingFace Hub API")?;
@@ -62,8 +64,11 @@ pub fn ensure_models(role: &str, models_dir: &Path, repo_id: Option<&str>) -> Re
         let cached_path = match repo_handle.get(file) {
             Ok(p) => p,
             Err(_e) if local_complete => {
+                let role_dir = local_role_dir
+                    .clone()
+                    .context("Local fallback requested but --models dir is missing")?;
                 info!(
-                    "HF resolve failed for {}, using local role dir: {}",
+                    "HF resolve failed for {}, using explicit local role dir: {}",
                     file,
                     role_dir.display()
                 );

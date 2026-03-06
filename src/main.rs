@@ -218,19 +218,13 @@ async fn cmd_worker(
         WorkerRole::Vocoder => "vocoder",
     };
 
-    // Default models dir: ~/.local/share/qwen3-tts/models
-    let models_dir = models.map(std::path::PathBuf::from).unwrap_or_else(|| {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-            .join("qwen3-tts")
-            .join("models")
-    });
+    let models_dir = models.as_deref().map(std::path::Path::new);
 
     // Set quant preference as env var for worker and download to pick up
     std::env::set_var("QWEN3_TTS_QUANT", &quant);
 
     // Auto-download missing model files
-    let role_dir = qwen3_tts_rs::download::ensure_models(role_str, &models_dir, Some(&repo))?;
+    let role_dir = qwen3_tts_rs::download::ensure_models(role_str, models_dir, Some(&repo))?;
 
     qwen3_tts_rs::worker::run_worker(&bind, role_str, role_dir.to_str().unwrap()).await
 }
@@ -361,7 +355,7 @@ async fn cmd_init(
 # Vocoder:   Vocoder (RKNN/ONNX)
 
 [models]
-dir = "~/.local/share/qwen3-tts/models"
+dir = "~/.cache/huggingface/hub"
 
 [workers.talker]
 host = "{talker_ip}"

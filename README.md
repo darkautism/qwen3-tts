@@ -256,8 +256,9 @@ qwen3-tts worker -r predictor -b 0.0.0.0:9091 --quant q4
 qwen3-tts worker -r vocoder -b 0.0.0.0:9092
 ```
 
-> qwen3-tts resolves role files from HuggingFace Hub cache paths (from `hf-hub` `repo.get(...)`).
-> It only falls back to local `${XDG_DATA_HOME:-$HOME/.local/share}/qwen3-tts/models/{role}/` if Hub resolution fails and local files are complete.
+> qwen3-tts resolves role files directly from HuggingFace Hub cache paths (from `hf-hub` `repo.get(...)`).
+> It does not mirror/copy role models into `${XDG_DATA_HOME:-$HOME/.local/share}/qwen3-tts/models` by default.
+> Optional offline fallback is only enabled when you explicitly pass `--models /path/to/models`.
 > Custom HF repo: `--repo your-name/your-repo`
 > For specific core pinning: `--cores 4-7` or `--cores 4,5,6,7`
 > On big.LITTLE SoCs (RK3588), big-core pinning is enabled by default (no extra flag required).

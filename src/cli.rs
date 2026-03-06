@@ -60,7 +60,7 @@ pub enum Commands {
         #[arg(short, long)]
         role: WorkerRole,
 
-        /// Models directory (default: ~/.local/share/qwen3-tts/models)
+        /// Optional local models directory (used only when explicitly set)
         #[arg(short, long)]
         models: Option<String>,
 
