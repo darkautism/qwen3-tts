@@ -106,10 +106,7 @@ impl Config {
         let candidates = if let Some(p) = path {
             vec![PathBuf::from(p)]
         } else {
-            vec![
-                PathBuf::from("qwen3-tts.toml"),
-                dirs_config().join("config.toml"),
-            ]
+            vec![PathBuf::from("qwen3-tts.toml"), default_config_path()]
         };
 
         for p in &candidates {
@@ -122,7 +119,8 @@ impl Config {
         }
 
         anyhow::bail!(
-            "No config file found. Create qwen3-tts.toml or ~/.config/qwen3-tts/config.toml"
+            "No config file found. Create qwen3-tts.toml or {}",
+            default_config_path().display()
         )
     }
 
@@ -135,12 +133,13 @@ impl Config {
     }
 }
 
-fn dirs_config() -> PathBuf {
-    dirs_home().join(".config").join("qwen3-tts")
+pub fn default_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"))
+        .join("qwen3-tts")
 }
 
-fn dirs_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/root"))
+pub fn default_config_path() -> PathBuf {
+    default_config_dir().join("config.toml")
 }
